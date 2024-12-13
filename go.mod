@@ -34,6 +34,12 @@ require (
 )
 
 require (
+	github.com/gorilla/websocket v1.5.0 // indirect
+	github.com/moby/spdystream v0.2.0 // indirect
+	github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f // indirect
+)
+
+require (
 	dario.cat/mergo v1.0.1 // direct
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.32.6

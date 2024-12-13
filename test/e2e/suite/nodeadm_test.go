@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -316,6 +317,7 @@ var _ = Describe("Hybrid Nodes", func() {
 							})
 
 							joinNodeTest := joinNodeTest{
+								clientConfig:  test.k8sClientConfig,
 								k8s:           test.k8sClient,
 								nodeIPAddress: instance.IP,
 								logger:        test.logger,
@@ -355,6 +357,7 @@ var _ = Describe("Hybrid Nodes", func() {
 })
 
 type joinNodeTest struct {
+	clientConfig  *restclient.Config
 	k8s           *clientgo.Clientset
 	nodeIPAddress string
 	logger        logr.Logger
@@ -383,6 +386,31 @@ func (t joinNodeTest) Run(ctx context.Context) error {
 		return err
 	}
 	t.logger.Info(fmt.Sprintf("Pod %s created and running on node %s", podName, nodeName))
+
+	t.logger.Info("Checking logs for nginx output", "pod", podName)
+	logs, err := kubernetes.GetPodLogs(ctx, t.k8s, podName, podNamespace)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(logs, "nginx") {
+		return fmt.Errorf("pod log does not contain expected value %s: %s", logs, "nginx")
+	}
+
+	t.logger.Info("Successfully validated log output", "pod", podName)
+
+	t.logger.Info("Exec-ing nginx -version", "pod", podName)
+	stdout, stderr, err := kubernetes.ExecPod(ctx, t.clientConfig, t.k8s, podName, podNamespace, "/sbin/nginx", "-version")
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(stdout, "nginx") {
+		return fmt.Errorf("pod exec stdout does not contain expected value %s: %s", stdout, "nginx")
+	}
+	if stderr != "" {
+		return fmt.Errorf("pod exec stderr should be empty %s", stderr)
+	}
+
+	t.logger.Info("Successfully exec'd nginx -version", "pod", podName)
 
 	t.logger.Info("Deleting test pod", "pod", podName)
 	if err = kubernetes.DeletePod(ctx, t.k8s, podName, podNamespace); err != nil {
@@ -495,6 +523,7 @@ func buildPeeredVPCTestForSuite(ctx context.Context, suite *suiteConfiguration) 
 	if err != nil {
 		return nil, err
 	}
+	test.k8sClientConfig = clientConfig
 	test.k8sClient, err = clientgo.NewForConfig(clientConfig)
 	if err != nil {
 		return nil, err
