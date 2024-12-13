@@ -39,6 +39,7 @@ func RunNodeadmUpgrade(ctx context.Context, client *ssm.SSM, instanceID, kuberne
 	commands := []string{
 		"set -eux",
 		"trap \"/tmp/log-collector.sh 'post-upgrade'\" EXIT",
+		"cat /proc/swaps",
 		fmt.Sprintf("sudo /tmp/nodeadm upgrade %s -c file:///nodeadm-config.yaml", kubernetesVersion),
 	}
 	ssmConfig := &ssmConfig{
