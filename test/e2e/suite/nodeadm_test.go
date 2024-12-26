@@ -267,7 +267,11 @@ var _ = Describe("Hybrid Nodes", func() {
 								nodeIPAddress: instance.IP,
 								logger:        test.logger,
 							}
-							Expect(joinNodeTest.Run(ctx)).To(Succeed(), "node should have joined the cluster successfully")
+							err = joinNodeTest.Run(ctx)
+							if err != nil {
+								Expect(ssm.CollectLogs(ctx, test.ssmClient, test.jumpboxInstanceId, instance.IP, test.logger)).To(Succeed())
+							}
+							Expect(err).To(Succeed(), "node should have joined the cluster successfully")
 
 							test.logger.Info("Resetting hybrid node...")
 
@@ -284,7 +288,11 @@ var _ = Describe("Hybrid Nodes", func() {
 							Expect(ec2.RebootEC2Instance(ctx, test.ec2ClientV2, instance.ID)).NotTo(HaveOccurred(), "EC2 Instance should have rebooted successfully")
 							test.logger.Info("EC2 Instance rebooted successfully.")
 
-							Expect(joinNodeTest.Run(ctx)).To(Succeed(), "node should have re-joined, there must be a problem with uninstall")
+							err = joinNodeTest.Run(ctx)
+							if err != nil {
+								Expect(ssm.CollectLogs(ctx, test.ssmClient, test.jumpboxInstanceId, instance.IP, test.logger)).To(Succeed())
+							}
+							Expect(err).To(Succeed(), "node should have re-joined, there must be a problem with uninstall")
 
 							if test.skipCleanup {
 								test.logger.Info("Skipping nodeadm uninstall from the hybrid node...")
@@ -436,7 +444,7 @@ func (c createNodeTest) Run(ctx context.Context) (ec2.Instance, error) {
 	var logsUploadUrls []e2e.LogsUploadUrl
 	if c.logsBucket != "" {
 		logsS3Prefix := fmt.Sprintf("logs/%s/%s", c.cluster.Name, c.instanceName)
-		for _, name := range []string{"post-install", "post-uninstall", "post-uninstall-install", "post-final-uninstall", "post-upgrade"} {
+		for _, name := range []string{"post-uninstall-install", "post-final-uninstall", "post-upgrade", "post-error"} {
 			url, err := s3.GeneratePutLogsPreSignedURL(c.s3Client, c.logsBucket, fmt.Sprintf("%s/%s.tar.gz", logsS3Prefix, name), 30*time.Minute)
 			logsUploadUrls = append(logsUploadUrls, e2e.LogsUploadUrl{Name: name, Url: url})
 			if err != nil {

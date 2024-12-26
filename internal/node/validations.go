@@ -42,6 +42,11 @@ func IsDrained(ctx context.Context) error {
 		}
 	}
 	if len(podsOnNode) != 0 {
+		fmt.Println("Pods still running on node:")
+		for _, pod := range podsOnNode {
+			fmt.Println(pod.ObjectMeta.Name)
+		}
+
 		return fmt.Errorf("node not drained")
 	}
 	return nil

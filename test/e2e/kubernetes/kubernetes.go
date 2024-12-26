@@ -22,6 +22,8 @@ import (
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/kubectl/pkg/drain"
+
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 )
 
 const (
@@ -192,6 +194,32 @@ func CreateNginxPodInNode(ctx context.Context, k8s *kubernetes.Clientset, nodeNa
 
 	err = waitForPodToBeRunning(ctx, k8s, podName, namespace, nodeName, logger)
 	if err != nil {
+		logger.Info("Getting events from nginx pod")
+		events, _ := k8s.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{FieldSelector: "involvedObject.name=" + podName, TypeMeta: metav1.TypeMeta{Kind: "Pod"}})
+		for _, item := range events.Items {
+			logger.Info(fmt.Sprintf("%s : %s", item.Reason, item.Message))
+		}
+		logger.Info("Getting events kube system pods")
+		events, _ = k8s.CoreV1().Events("kube-system").List(ctx, metav1.ListOptions{TypeMeta: metav1.TypeMeta{Kind: "Pod"}})
+		for _, item := range events.Items {
+			logger.Info(fmt.Sprintf("%s : %s : %s", item.ObjectMeta.Name, item.Reason, item.Message))
+		}
+		logger.Info("Getting logs from cilium-operator")
+		pods, _ := k8s.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=cilium-operator", TypeMeta: metav1.TypeMeta{Kind: "Pod"}})
+		for _, pod := range pods.Items {
+			req := k8s.CoreV1().Pods(namespace).GetLogs(pod.ObjectMeta.Name, &corev1.PodLogOptions{Previous: true})
+			podLogs, err := req.Stream(ctx)
+			if err != nil {
+				return fmt.Errorf("opening log stream: %w", err)
+			}
+			defer podLogs.Close()
+
+			buf := new(bytes.Buffer)
+			if _, err = io.Copy(buf, podLogs); err != nil {
+				return fmt.Errorf("getting logs from stream: %w", err)
+			}
+			logger.Info(buf.String())
+		}
 		return fmt.Errorf("waiting for test pod to be running: %w", err)
 	}
 	return nil
@@ -333,13 +361,26 @@ func DrainNode(ctx context.Context, k8s *kubernetes.Clientset, node *corev1.Node
 	if err != nil {
 		return err
 	}
+	for {
+		err = drain.RunNodeDrain(helper, node.Name)
+		if err != nil {
+			return fmt.Errorf("draining node %s: %v", node.Name, err)
+		}
 
-	err = drain.RunNodeDrain(helper, node.Name)
-	if err != nil {
-		return fmt.Errorf("draining node %s: %v", node.Name, err)
+		list, errs := helper.GetPodsForDeletion(node.Name)
+		if errs != nil {
+			return utilerrors.NewAggregate(errs)
+		}
+		if warnings := list.Warnings(); warnings != "" {
+			fmt.Fprintf(helper.ErrOut, "WARNING: %s\n", warnings)
+		}
+		if len(list.Pods()) == 0 {
+			return nil
+		}
+		for _, pod := range list.Pods() {
+			fmt.Fprintf(helper.ErrOut, "Pod still running after drain: %s\n", pod.ObjectMeta.Name)
+		}
 	}
-
-	return nil
 }
 
 func UncordonNode(ctx context.Context, k8s *kubernetes.Clientset, node *corev1.Node) error {
