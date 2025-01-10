@@ -238,9 +238,6 @@ func waitForPodToBeRunning(ctx context.Context, k8s *kubernetes.Clientset, name,
 		}
 		consecutiveErrors = 0
 
-		if pod.Status.Phase == corev1.PodSucceeded {
-			return false, fmt.Errorf("test pod exited before containers ready")
-		}
 		if pod.Status.Phase != corev1.PodRunning {
 			return false, nil // continue polling
 		}
