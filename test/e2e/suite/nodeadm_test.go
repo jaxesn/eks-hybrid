@@ -250,24 +250,25 @@ var _ = Describe("Hybrid Nodes", func() {
 							}
 
 							createNodeTest := createNodeTest{
-								awsSession:         test.awsSession,
-								cluster:            test.cluster,
-								ec2ClientV2:        test.ec2ClientV2,
-								instanceName:       instanceName,
-								instanceProfileARN: test.stackOut.InstanceProfileARN,
-								k8sClient:          test.k8sClient,
-								k8sVersion:         k8sVersion,
-								logger:             test.logger,
-								logsBucket:         test.logsBucket,
-								nodeadmURLs:        test.nodeadmURLs,
-								nodeNamePrefix:     "simpleflow",
-								os:                 os,
-								provider:           provider,
-								publicKey:          test.publicKey,
-								s3Client:           test.s3Client,
-								setRootPassword:    test.setRootPassword,
-								skipCleanup:        test.skipCleanup,
-								ssmClient:          test.ssmClient,
+								awsSession:          test.awsSession,
+								cluster:             test.cluster,
+								ec2ClientV2:         test.ec2ClientV2,
+								instanceName:        instanceName,
+								instanceProfileARN:  test.stackOut.InstanceProfileARN,
+								k8sClient:           test.k8sClient,
+								k8sVersion:          k8sVersion,
+								logger:              test.logger,
+								logsBucket:          test.logsBucket,
+								nodeadmURLs:         test.nodeadmURLs,
+								nodeNamePrefix:      "simpleflow",
+								os:                  os,
+								provider:            provider,
+								publicKey:           test.publicKey,
+								remoteCommandRunner: test.remoteCommandRunner,
+								s3Client:            test.s3Client,
+								setRootPassword:     test.setRootPassword,
+								skipCleanup:         test.skipCleanup,
+								ssmClient:           test.ssmClient,
 							}
 							instance, err := createNodeTest.Run(ctx)
 							Expect(err).NotTo(HaveOccurred(), "EC2 Instance should have been created successfully")
@@ -330,24 +331,25 @@ var _ = Describe("Hybrid Nodes", func() {
 							Expect(err).NotTo(HaveOccurred(), "expected to get previous k8s version")
 
 							createNodeTest := createNodeTest{
-								awsSession:         test.awsSession,
-								cluster:            test.cluster,
-								ec2ClientV2:        test.ec2ClientV2,
-								instanceName:       instanceName,
-								instanceProfileARN: test.stackOut.InstanceProfileARN,
-								k8sClient:          test.k8sClient,
-								k8sVersion:         nodeKubernetesVersion,
-								logger:             test.logger,
-								logsBucket:         test.logsBucket,
-								nodeadmURLs:        test.nodeadmURLs,
-								nodeNamePrefix:     "upgradeflow",
-								os:                 os,
-								provider:           provider,
-								publicKey:          test.publicKey,
-								s3Client:           test.s3Client,
-								skipCleanup:        test.skipCleanup,
-								setRootPassword:    test.setRootPassword,
-								ssmClient:          test.ssmClient,
+								awsSession:          test.awsSession,
+								cluster:             test.cluster,
+								ec2ClientV2:         test.ec2ClientV2,
+								instanceName:        instanceName,
+								instanceProfileARN:  test.stackOut.InstanceProfileARN,
+								k8sClient:           test.k8sClient,
+								k8sVersion:          nodeKubernetesVersion,
+								logger:              test.logger,
+								logsBucket:          test.logsBucket,
+								nodeadmURLs:         test.nodeadmURLs,
+								nodeNamePrefix:      "upgradeflow",
+								os:                  os,
+								provider:            provider,
+								publicKey:           test.publicKey,
+								remoteCommandRunner: test.remoteCommandRunner,
+								s3Client:            test.s3Client,
+								skipCleanup:         test.skipCleanup,
+								setRootPassword:     test.setRootPassword,
+								ssmClient:           test.ssmClient,
 							}
 							instance, err := createNodeTest.Run(ctx)
 							Expect(err).NotTo(HaveOccurred(), "EC2 Instance should have been created successfully")
@@ -391,27 +393,32 @@ var _ = Describe("Hybrid Nodes", func() {
 })
 
 type createNodeTest struct {
-	awsSession         *session.Session
-	cluster            *peered.HybridCluster
-	ec2ClientV2        *ec2v2.Client
-	instanceName       string
-	instanceProfileARN string
-	k8sClient          *clientgo.Clientset
-	k8sVersion         string
-	logger             logr.Logger
-	logsBucket         string
-	nodeadmURLs        e2e.NodeadmURLs
-	nodeNamePrefix     string
-	os                 e2e.NodeadmOS
-	provider           e2e.NodeadmCredentialsProvider
-	publicKey          string
-	s3Client           *s3v1.S3
-	setRootPassword    bool
-	skipCleanup        bool
-	ssmClient          *ssmv1.SSM
+	awsSession          *session.Session
+	cluster             *peered.HybridCluster
+	ec2ClientV2         *ec2v2.Client
+	instanceName        string
+	instanceProfileARN  string
+	k8sClient           *clientgo.Clientset
+	k8sVersion          string
+	logger              logr.Logger
+	logsBucket          string
+	nodeadmURLs         e2e.NodeadmURLs
+	nodeNamePrefix      string
+	os                  e2e.NodeadmOS
+	provider            e2e.NodeadmCredentialsProvider
+	publicKey           string
+	remoteCommandRunner commands.RemoteCommandRunner
+	s3Client            *s3v1.S3
+	setRootPassword     bool
+	skipCleanup         bool
+	ssmClient           *ssmv1.SSM
 }
 
 func (c createNodeTest) Run(ctx context.Context) (ec2.Instance, error) {
+	if c.logsBucket != "" {
+		c.logger.Info(fmt.Sprintf("Logs bucket: https://%s.console.aws.amazon.com/s3/buckets/%s?prefix=%s/", c.cluster.Region, c.logsBucket, c.logsPrefix()))
+	}
+
 	nodeSpec := e2e.NodeSpec{
 		OS:         c.os,
 		NamePrefix: c.nodeNamePrefix,
@@ -447,19 +454,6 @@ func (c createNodeTest) Run(ctx context.Context) (ec2.Instance, error) {
 		c.logger.Info(fmt.Sprintf("Instance Root Password: %s", rootPassword))
 	}
 
-	var logsUploadUrls []e2e.LogsUploadUrl
-	if c.logsBucket != "" {
-		logsS3Prefix := fmt.Sprintf("logs/%s/%s", c.cluster.Name, c.instanceName)
-		for _, name := range []string{"post-install", "post-uninstall", "post-uninstall-install", "post-final-uninstall", "post-upgrade"} {
-			url, err := s3.GeneratePutLogsPreSignedURL(c.s3Client, c.logsBucket, fmt.Sprintf("%s/%s.tar.gz", logsS3Prefix, name), 30*time.Minute)
-			logsUploadUrls = append(logsUploadUrls, e2e.LogsUploadUrl{Name: name, Url: url})
-			if err != nil {
-				return ec2.Instance{}, fmt.Errorf("expected to successfully sign logs upload path: %w", err)
-			}
-		}
-		c.logger.Info(fmt.Sprintf("Logs bucket: https://%s.console.aws.amazon.com/s3/buckets/%s?prefix=%s/", c.cluster.Region, c.logsBucket, logsS3Prefix))
-	}
-
 	userdata, err := c.os.BuildUserData(e2e.UserDataInput{
 		KubernetesVersion: c.k8sVersion,
 		NodeadmUrls:       c.nodeadmURLs,
@@ -467,7 +461,6 @@ func (c createNodeTest) Run(ctx context.Context) (ec2.Instance, error) {
 		Provider:          string(c.provider.Name()),
 		RootPasswordHash:  rootPasswordHash,
 		Files:             files,
-		LogsUploadUrls:    logsUploadUrls,
 		PublicKey:         c.publicKey,
 	})
 	if err != nil {
@@ -499,6 +492,7 @@ func (c createNodeTest) Run(ctx context.Context) (ec2.Instance, error) {
 	c.logger.Info(fmt.Sprintf("EC2 Instance Connect: https://%s.console.aws.amazon.com/ec2-instance-connect/ssh?connType=serial&instanceId=%s&region=%s&serialPort=0", c.cluster.Region, instance.ID, c.cluster.Region))
 
 	DeferCleanup(func(ctx context.Context) {
+		c.collectLogs(ctx, "bundle", instance.IP)
 		if c.skipCleanup {
 			c.logger.Info("Skipping EC2 Instance deletion", "instanceID", instance.ID)
 			return
@@ -509,6 +503,27 @@ func (c createNodeTest) Run(ctx context.Context) (ec2.Instance, error) {
 		Expect(kubernetes.EnsureNodeWithIPIsDeleted(ctx, c.k8sClient, instance.IP)).To(Succeed(), "node should have been deleted from the cluster")
 	})
 	return instance, nil
+}
+
+func (c createNodeTest) logsPrefix() string {
+	return fmt.Sprintf("logs/%s/%s", c.cluster.Name, c.instanceName)
+}
+
+func (c createNodeTest) collectLogs(ctx context.Context, bundleName, instanceIP string) error {
+	if c.logsBucket == "" {
+		return nil
+	}
+	url, err := s3.GeneratePutLogsPreSignedURL(c.s3Client, c.logsBucket, fmt.Sprintf("%s/%s.tar.gz", c.logsPrefix(), bundleName), 5*time.Minute)
+	if err != nil {
+		c.logger.Info("collecting logs on node", err)
+		return err
+	}
+	err = nodeadm.RunLogCollector(ctx, c.remoteCommandRunner, instanceIP, url)
+	if err != nil {
+		c.logger.Info("collecting logs on node", err)
+		return err
+	}
+	return nil
 }
 
 type joinNodeTest struct {
