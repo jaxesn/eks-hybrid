@@ -68,6 +68,8 @@ preflight:
     digest: $CILIUM_DIGEST
 EOF
 
+helm repo add cilium https://helm.cilium.io/
+helm repo update cilium
 helm template cilium cilium/cilium --version ${CILIUM_VERSION:1} --namespace kube-system --values ./cilium-values.yaml --set ipam.operator.clusterPoolIPv4PodCIDRList='\{\{.PodCIDR\}\}' >  ./cilium-template.yaml
 
 echo "$CILIUM_VERSION" > VERSION
