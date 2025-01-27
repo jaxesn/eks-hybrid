@@ -20,6 +20,7 @@ type IamRolesAnywhereProvider struct {
 	ProfileARN     string
 	RoleARN        string
 	CA             *Certificate
+	nodeSpec       e2e.NodeSpec
 }
 
 func (i *IamRolesAnywhereProvider) Name() creds.CredentialProvider {
@@ -27,6 +28,7 @@ func (i *IamRolesAnywhereProvider) Name() creds.CredentialProvider {
 }
 
 func (i *IamRolesAnywhereProvider) NodeadmConfig(ctx context.Context, spec e2e.NodeSpec) (*api.NodeConfig, error) {
+	i.nodeSpec = spec
 	return &api.NodeConfig{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "node.eks.aws/v1alpha1",
@@ -51,7 +53,9 @@ func (i *IamRolesAnywhereProvider) NodeadmConfig(ctx context.Context, spec e2e.N
 		},
 	}, nil
 }
-
+func (i *IamRolesAnywhereProvider) NodeName(ctx context.Context) (string, error) {
+	return i.nodeName(i.nodeSpec), nil
+}
 func (i *IamRolesAnywhereProvider) nodeName(node e2e.NodeSpec) string {
 	return node.NamePrefix + "-node-" + string(i.Name()) + "-" + node.OS.Name()
 }

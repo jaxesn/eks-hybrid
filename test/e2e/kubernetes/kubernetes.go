@@ -69,6 +69,19 @@ func WaitForNode(ctx context.Context, k8s *kubernetes.Clientset, internalIP stri
 	return foundNode, nil
 }
 
+func GetNodeByName(ctx context.Context, k8s *kubernetes.Clientset, nodeName string) (*corev1.Node, error) {
+	var node *corev1.Node
+	err := retry.OnError(retry.DefaultRetry, func(err error) bool {
+		// Retry any error type
+		return true
+	}, func() error {
+		var err error
+		node, err = k8s.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		return err
+	})
+	return node, err
+}
+
 func getNodeByInternalIP(ctx context.Context, k8s *kubernetes.Clientset, internalIP string) (*corev1.Node, error) {
 	nodes, err := k8s.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {

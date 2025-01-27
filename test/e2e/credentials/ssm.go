@@ -19,8 +19,9 @@ import (
 const ssmActivationName = "eks-hybrid-ssm-provider"
 
 type SsmProvider struct {
-	SSM  *ssm.Client
-	Role string
+	activationId string
+	SSM          *ssm.Client
+	Role         string
 }
 
 func (s *SsmProvider) Name() creds.CredentialProvider {
@@ -32,6 +33,7 @@ func (s *SsmProvider) NodeadmConfig(ctx context.Context, node e2e.NodeSpec) (*ap
 	if err != nil {
 		return nil, err
 	}
+	s.activationId = *ssmActivationDetails.ActivationId
 	return &api.NodeConfig{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "node.eks.aws/v1alpha1",
@@ -59,6 +61,28 @@ func (s *SsmProvider) VerifyUninstall(ctx context.Context, instanceId string) er
 
 func (s *SsmProvider) FilesForNode(_ e2e.NodeSpec) ([]e2e.File, error) {
 	return nil, nil
+}
+
+func (s *SsmProvider) NodeName(ctx context.Context) (string, error) {
+	output, err := s.SSM.DescribeInstanceInformation(ctx, &ssm.DescribeInstanceInformationInput{
+		Filters: []types.InstanceInformationStringFilter{
+			{
+				Key:    aws.String("ActivationIds"),
+				Values: []string{s.activationId},
+			},
+			{
+				Key:    aws.String("ResourceType"),
+				Values: []string{"ManagedInstance"},
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(output.InstanceInformationList) == 0 {
+		return "", fmt.Errorf("no managed instances found for ActivationId: %s", s.activationId)
+	}
+	return *output.InstanceInformationList[0].InstanceId, nil
 }
 
 func createSSMActivation(ctx context.Context, client *ssm.Client, iamRole, ssmActivationName, clusterName string) (*ssm.CreateActivationOutput, error) {
