@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -40,8 +39,6 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/s3"
 	"github.com/aws/eks-hybrid/test/e2e/ssm"
 )
-
-const deferCleanupTimeout = 5 * time.Minute
 
 var (
 	filePath string
@@ -220,109 +217,164 @@ var _ = Describe("Hybrid Nodes", func() {
 		When("using ec2 instance as hybrid nodes", func() {
 			for _, os := range osList {
 				for _, provider := range credentialProviders {
-					DescribeTable("Joining a node",
-						func(ctx context.Context, os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) {
-							Expect(os).NotTo(BeNil())
-							Expect(provider).NotTo(BeNil())
+					DescribeTableSubtree("Joining a node", Ordered,
+						func(os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) {
+							var instance ec2.Instance
+							var testCleanup TestCleanup
 
-							instanceName := test.instanceName("init", os, provider)
-
-							k8sVersion := test.cluster.KubernetesVersion
-							if test.overrideNodeK8sVersion != "" {
-								k8sVersion = suite.TestConfig.NodeK8sVersion
-							}
-
-							peeredNode := test.newPeeredNode()
-							instance, err := peeredNode.Create(ctx, &peered.NodeSpec{
-								InstanceName:   instanceName,
-								NodeK8sVersion: k8sVersion,
-								NodeNamePrefix: "simpleflow",
-								OS:             os,
-								Provider:       provider,
+							BeforeAll(func() {
+								Expect(os).NotTo(BeNil())
+								Expect(provider).NotTo(BeNil())
+								testCleanup.DeferAll()
 							})
-							Expect(err).NotTo(HaveOccurred(), "EC2 Instance should have been created successfully")
-							DeferCleanup(func(ctx context.Context) {
-								Expect(peeredNode.Cleanup(ctx, instance)).To(Succeed())
-							}, NodeTimeout(deferCleanupTimeout))
 
-							test.logger.Info("Waiting for EC2 Instance to be Running...")
-							Expect(ec2.WaitForEC2InstanceRunning(ctx, test.ec2Client, instance.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
+							It("creates EC2 instance", FlakeAttempts(2), func(ctx context.Context) {
+								instanceName := test.instanceName("init", os, provider)
 
-							verifyNode := test.newVerifyNode(instance.IP)
-							Expect(verifyNode.Run(ctx)).To(
-								Succeed(), "node should have joined the cluster successfully",
-							)
+								k8sVersion := test.cluster.KubernetesVersion
+								if test.overrideNodeK8sVersion != "" {
+									k8sVersion = suite.TestConfig.NodeK8sVersion
+								}
 
-							test.logger.Info("Testing Pod Identity add-on functionality")
-							verifyPodIdentityAddon := test.newVerifyPodIdentityAddon()
+								peeredNode := test.newPeeredNode()
+								instanceNode, err := peeredNode.Create(ctx, &peered.NodeSpec{
+									InstanceName:   instanceName,
+									NodeK8sVersion: k8sVersion,
+									NodeNamePrefix: "simpleflow",
+									OS:             os,
+									Provider:       provider,
+								})
+								Expect(err).NotTo(HaveOccurred(), "EC2 Instance should have been created successfully")
+								testCleanup.Register(func(ctx context.Context) {
+									Expect(peeredNode.Cleanup(ctx, instanceNode)).To(Succeed())
+								})
+								Expect(ec2.WaitForEC2InstanceRunning(ctx, test.ec2Client, instanceNode.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
+								// Instance needed for future tests
+								instance = instanceNode
+							})
 
-							Expect(verifyPodIdentityAddon.Run(ctx)).To(Succeed(), "pod identity add-on should be created successfully")
+							It("joins as a kubernetes node", func(ctx context.Context) {
+								node, err := kubernetes.WaitForNode(ctx, test.k8sClient, instance.IP, test.logger)
+								Expect(err).NotTo(HaveOccurred(), "Node should have joined the cluster")
+								Expect(node).NotTo(BeNil())
+							})
 
-							test.logger.Info("Resetting hybrid node...")
-							cleanNode := test.newCleanNode(provider, instance.IP)
-							Expect(cleanNode.Run(ctx)).To(Succeed(), "node should have been reset successfully")
+							It("validates the kubernetes node", func(ctx context.Context) {
+								verifyNode := test.newVerifyNode(instance.IP)
+								Expect(verifyNode.Run(ctx)).To(
+									Succeed(), "node should have joined the cluster successfully",
+								)
 
-							test.logger.Info("Rebooting EC2 Instance.")
-							Expect(nodeadm.RebootInstance(ctx, test.remoteCommandRunner, instance.IP)).NotTo(HaveOccurred(), "EC2 Instance should have rebooted successfully")
-							test.logger.Info("EC2 Instance rebooted successfully.")
+								test.logger.Info("Testing Pod Identity add-on functionality")
+								verifyPodIdentityAddon := test.newVerifyPodIdentityAddon()
 
-							Expect(verifyNode.Run(ctx)).To(Succeed(), "node should have re-joined, there must be a problem with uninstall")
+								Expect(verifyPodIdentityAddon.Run(ctx)).To(Succeed(), "pod identity add-on should be created successfully")
+							})
 
-							if test.skipCleanup {
-								test.logger.Info("Skipping nodeadm uninstall from the hybrid node...")
-								return
-							}
+							It("is cleaned with uninstall", func(ctx context.Context) {
+								test.logger.Info("Resetting hybrid node...")
+								cleanNode := test.newCleanNode(provider, instance.IP)
+								Expect(cleanNode.Run(ctx)).To(Succeed(), "node should have been reset successfully")
 
-							Expect(cleanNode.Run(ctx)).To(Succeed(), "node should have been reset successfully")
+								test.logger.Info("Rebooting EC2 Instance.")
+								Expect(nodeadm.RebootInstance(ctx, test.remoteCommandRunner, instance.IP)).NotTo(HaveOccurred(), "EC2 Instance should have rebooted successfully")
+								test.logger.Info("EC2 Instance rebooted successfully.")
+							})
+
+							It("rejoins as a kubernetes node after reboot", func(ctx context.Context) {
+								node, err := kubernetes.WaitForNode(ctx, test.k8sClient, instance.IP, test.logger)
+								Expect(err).NotTo(HaveOccurred(), "node should have re-joined, this could indicate a problem with uninstall")
+								Expect(node).NotTo(BeNil())
+							})
+
+							It("validates the kubernetes node after reboot", func(ctx context.Context) {
+								verifyNode := test.newVerifyNode(instance.IP)
+								Expect(verifyNode.Run(ctx)).To(Succeed(), "node should have re-joined, there must be a problem with uninstall")
+							})
+
+							It("is cleaned with uninstall", func(ctx context.Context) {
+								if test.skipCleanup {
+									test.logger.Info("Skipping nodeadm uninstall from the hybrid node...")
+									return
+								}
+								cleanNode := test.newCleanNode(provider, instance.IP)
+								Expect(cleanNode.Run(ctx)).To(Succeed(), "node should have been reset successfully")
+							})
 						},
 						Entry(fmt.Sprintf("With OS %s and with Credential Provider %s", os.Name(), string(provider.Name())), os, provider, Label(os.Name(), string(provider.Name()), "simpleflow", "init")),
 					)
 
-					DescribeTable("Upgrade nodeadm flow",
-						func(ctx context.Context, os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) {
-							Expect(os).NotTo(BeNil())
-							Expect(provider).NotTo(BeNil())
+					DescribeTableSubtree("Upgrade nodeadm flow", Ordered,
+						func(os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) {
+							var instance ec2.Instance
+							var testCleanup TestCleanup
 
-							// Skip upgrade flow for cluster with the minimum kubernetes version
-							isSupport, err := kubernetes.IsPreviousVersionSupported(test.cluster.KubernetesVersion)
-							Expect(err).NotTo(HaveOccurred(), "expected to get previous k8s version")
-							if !isSupport {
-								Skip(fmt.Sprintf("Skipping upgrade test as minimum k8s version is %s", kubernetes.MinimumVersion))
-							}
-
-							instanceName := test.instanceName("upgrade", os, provider)
-
-							nodeKubernetesVersion, err := kubernetes.PreviousVersion(test.cluster.KubernetesVersion)
-							Expect(err).NotTo(HaveOccurred(), "expected to get previous k8s version")
-
-							peeredNode := test.newPeeredNode()
-							instance, err := peeredNode.Create(ctx, &peered.NodeSpec{
-								InstanceName:   instanceName,
-								NodeK8sVersion: nodeKubernetesVersion,
-								NodeNamePrefix: "upgradeflow",
-								OS:             os,
-								Provider:       provider,
+							BeforeAll(func() {
+								Expect(os).NotTo(BeNil())
+								Expect(provider).NotTo(BeNil())
+								testCleanup.DeferAll()
 							})
-							Expect(err).NotTo(HaveOccurred(), "EC2 Instance should have been created successfully")
-							DeferCleanup(func(ctx context.Context) {
-								Expect(peeredNode.Cleanup(ctx, instance)).To(Succeed())
-							}, NodeTimeout(deferCleanupTimeout))
 
-							verifyNode := test.newVerifyNode(instance.IP)
-							Expect(verifyNode.Run(ctx)).To(
-								Succeed(), "node should have joined the cluster successfully",
-							)
+							It("creates EC2 instance", FlakeAttempts(2), func(ctx context.Context) {
+								// Skip upgrade flow for cluster with the minimum kubernetes version
+								isSupport, err := kubernetes.IsPreviousVersionSupported(test.cluster.KubernetesVersion)
+								Expect(err).NotTo(HaveOccurred(), "expected to get previous k8s version")
+								if !isSupport {
+									Skip(fmt.Sprintf("Skipping upgrade test as minimum k8s version is %s", kubernetes.MinimumVersion))
+								}
 
-							Expect(test.newUpgradeNode(instance.IP).Run(ctx)).To(
-								Succeed(), "node should have upgraded successfully",
-							)
+								instanceName := test.instanceName("upgrade", os, provider)
 
-							Expect(verifyNode.Run(ctx)).To(Succeed(), "node should have joined the cluster successfully after nodeadm upgrade")
+								nodeKubernetesVersion, err := kubernetes.PreviousVersion(test.cluster.KubernetesVersion)
+								Expect(err).NotTo(HaveOccurred(), "expected to get previous k8s version")
 
-							test.logger.Info("Resetting hybrid node...")
-							Expect(test.newCleanNode(provider, instance.IP).Run(ctx)).To(
-								Succeed(), "node should have been reset successfully",
-							)
+								peeredNode := test.newPeeredNode()
+								instanceNode, err := peeredNode.Create(ctx, &peered.NodeSpec{
+									InstanceName:   instanceName,
+									NodeK8sVersion: nodeKubernetesVersion,
+									NodeNamePrefix: "upgradeflow",
+									OS:             os,
+									Provider:       provider,
+								})
+								Expect(err).NotTo(HaveOccurred(), "EC2 Instance should have been created successfully")
+								testCleanup.Register(func(ctx context.Context) {
+									Expect(peeredNode.Cleanup(ctx, instance)).To(Succeed())
+								})
+								// Instance needed for future tests
+								instance = instanceNode
+							})
+
+							It("joins as a kubernetes node", func(ctx context.Context) {
+								node, err := kubernetes.WaitForNode(ctx, test.k8sClient, instance.IP, test.logger)
+								Expect(err).NotTo(HaveOccurred(), "Node should have joined the cluster")
+								Expect(node).NotTo(BeNil())
+							})
+
+							It("validates the kubernetes node", func(ctx context.Context) {
+								verifyNode := test.newVerifyNode(instance.IP)
+								Expect(verifyNode.Run(ctx)).To(
+									Succeed(), "node should have joined the cluster successfully",
+								)
+							})
+
+							It("upgrades the kubernetes node", func(ctx context.Context) {
+								Expect(test.newUpgradeNode(instance.IP).Run(ctx)).To(
+									Succeed(), "node should have upgraded successfully",
+								)
+							})
+							It("validates the kubernetes node after ugpgrade", func(ctx context.Context) {
+								verifyNode := test.newVerifyNode(instance.IP)
+								Expect(verifyNode.Run(ctx)).To(
+									Succeed(), "node should have joined the cluster successfully after nodeadm upgrade",
+								)
+							})
+
+							It("is cleaned with uninstall", func(ctx context.Context) {
+								test.logger.Info("Resetting hybrid node...")
+								Expect(test.newCleanNode(provider, instance.IP).Run(ctx)).To(
+									Succeed(), "node should have been reset successfully",
+								)
+							})
 						},
 						Entry(fmt.Sprintf("With OS %s and with Credential Provider %s", os.Name(), string(provider.Name())), os, provider, Label(os.Name(), string(provider.Name()), "upgradeflow")),
 					)
