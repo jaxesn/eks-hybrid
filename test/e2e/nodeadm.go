@@ -49,6 +49,7 @@ type File struct {
 
 type NodeadmCredentialsProvider interface {
 	Name() creds.CredentialProvider
+	NodeName(context.Context) (string, error)
 	NodeadmConfig(ctx context.Context, node NodeSpec) (*api.NodeConfig, error)
 	VerifyUninstall(ctx context.Context, instanceId string) error
 	FilesForNode(spec NodeSpec) ([]File, error)

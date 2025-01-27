@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	s3v2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	ssmv2 "github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/aws-sdk-go/aws/awsutil"
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -254,8 +255,16 @@ var _ = Describe("Hybrid Nodes", func() {
 							})
 
 							It("joins as a kubernetes node", func(ctx context.Context) {
-								node, err := kubernetes.WaitForNode(ctx, test.k8sClient, instance.IP, test.logger)
-								Expect(err).NotTo(HaveOccurred(), "Node should have joined the cluster")
+								node, errWait := kubernetes.WaitForNode(ctx, test.k8sClient, instance.IP, test.logger)
+								if errWait != nil {
+									test.logger.Info("Node did not join cluster. Checking by nodeName.", "instanceIP", instance.IP)
+									name, err := provider.NodeName(ctx)
+									Expect(err).To(Succeed(), "Provider should have returned the nodeName")
+									node, err := kubernetes.GetNodeByName(ctx, test.k8sClient, name)
+									Expect(err).To(Succeed(), "Node should have joined with the name")
+									test.logger.Info(awsutil.Prettify(node))
+								}
+								Expect(errWait).NotTo(HaveOccurred(), "Node should have joined the cluster")
 								Expect(node).NotTo(BeNil())
 							})
 
