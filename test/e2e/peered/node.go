@@ -2,13 +2,22 @@ package peered
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ec2sdk "github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2instanceconnect"
 	s3sdk "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/go-logr/logr"
 	clientgo "k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
@@ -18,7 +27,7 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/ec2"
 	"github.com/aws/eks-hybrid/test/e2e/kubernetes"
 	"github.com/aws/eks-hybrid/test/e2e/nodeadm"
-	"github.com/aws/eks-hybrid/test/e2e/os"
+	e2eOs "github.com/aws/eks-hybrid/test/e2e/os"
 	"github.com/aws/eks-hybrid/test/e2e/s3"
 )
 
@@ -88,7 +97,7 @@ func (c Node) Create(ctx context.Context, spec *NodeSpec) (ec2.Instance, error) 
 	var rootPasswordHash string
 	if c.SetRootPassword {
 		var rootPassword string
-		rootPassword, rootPasswordHash, err = os.GenerateOSPassword()
+		rootPassword, rootPasswordHash, err = e2eOs.GenerateOSPassword()
 		if err != nil {
 			return ec2.Instance{}, fmt.Errorf("expected to successfully generate root password: %w", err)
 		}
@@ -133,6 +142,128 @@ func (c Node) Create(ctx context.Context, spec *NodeSpec) (ec2.Instance, error) 
 	c.Logger.Info(fmt.Sprintf("EC2 Instance Connect: https://%s.console.aws.amazon.com/ec2-instance-connect/ssh?connType=serial&instanceId=%s&region=%s&serialPort=0", c.Cluster.Region, instance.ID, c.Cluster.Region))
 
 	return instance, nil
+}
+
+func (c *Node) CaptureEC2SerialOutput(ctx context.Context, instanceId string) error {
+	privateKey, publicKey, err := generateKeyPair()
+	if err != nil {
+		return fmt.Errorf("generating keypair: %w", err)
+	}
+
+	signer, err := ssh.ParsePrivateKey(privateKey)
+	if err != nil {
+		return fmt.Errorf("parsing private key: %w", err)
+	}
+
+	config := &ssh.ClientConfig{
+		User: instanceId + ".port0",
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+
+	// node needs to be passed pending state to send the serial public key
+	// the sooner this completes, the more of the initial boot log we will get
+	err = ec2.WaitForEC2InstanceRunning(ctx, c.EC2, instanceId)
+	if err != nil {
+		return fmt.Errorf("waiting on instance running: %w", err)
+	}
+
+	client := ec2instanceconnect.NewFromConfig(c.AWS)
+	_, err = client.SendSerialConsoleSSHPublicKey(ctx, &ec2instanceconnect.SendSerialConsoleSSHPublicKeyInput{
+		InstanceId:   aws.String(instanceId),
+		SSHPublicKey: aws.String(string(publicKey)),
+	})
+	if err != nil {
+		return fmt.Errorf("adding ssh key via instance connect: %w", err)
+	}
+
+	sshClient, err := ssh.Dial("tcp", "serial-console.ec2-instance-connect."+c.AWS.Region+".aws:22", config)
+	if err != nil {
+		return fmt.Errorf("connecting to serial console: %w", err)
+	}
+
+	session, err := sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("creating ssh session: %w", err)
+	}
+
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          1,     // enable echoing
+		ssh.TTY_OP_ISPEED: 14400, // input speed = 14.4kbaud
+		ssh.TTY_OP_OSPEED: 14400, // output speed = 14.4kbaud
+	}
+
+	if err := session.RequestPty("xterm", 80, 40, modes); err != nil {
+		return fmt.Errorf("requesting pty: %w", err)
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("opening stdout: %w", err)
+	}
+
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("opening stderr: %w", err)
+	}
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("opening stdin: %w", err)
+	}
+
+	err = session.Shell()
+	if err != nil {
+		return fmt.Errorf("opening shell: %w", err)
+	}
+
+	// sending a newline to "start" the output collection
+	// since we arent running a new command just connecting
+	// to the serial console to capture output from the boot/init processes
+	_, err = stdin.Write([]byte("\n"))
+	if err != nil {
+		return fmt.Errorf("writing to stdin: %w", err)
+	}
+
+	go func() {
+		defer sshClient.Close()
+		defer session.Close()
+
+		for {
+			fmt.Println("waiting")
+			io.Copy(os.Stdout, stdout)
+			io.Copy(os.Stderr, stderr)
+			// if err := session.Wait(); err != nil {
+			// 	fmt.Println(fmt.Errorf("sesssion wait: %w", err))
+			// }
+			time.Sleep(10 * time.Second)
+		}
+	}()
+
+	return nil
+}
+
+func generateKeyPair() ([]byte, []byte, error) {
+	var empty []byte
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return empty, empty, fmt.Errorf("generating private key: %w", err)
+	}
+
+	privateKeyPEM := &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	}
+
+	// Generate the corresponding public key
+	publicKey, err := ssh.NewPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		return empty, empty, fmt.Errorf("generating public key: %w", err)
+	}
+
+	return pem.EncodeToMemory(privateKeyPEM), ssh.MarshalAuthorizedKey(publicKey), nil
 }
 
 // Cleanup collects logs and deletes the EC2 instance and Node object.

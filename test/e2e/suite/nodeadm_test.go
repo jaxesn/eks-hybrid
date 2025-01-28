@@ -263,6 +263,7 @@ var _ = Describe("Hybrid Nodes", func() {
 								Expect(peeredNode.Cleanup(ctx, instance)).To(Succeed())
 							}, NodeTimeout(deferCleanupTimeout))
 
+							Expect(peeredNode.CaptureEC2SerialOutput(ctx, instance.ID)).To(Succeed(), "EC2 Instance Connect should have succeeded")
 							test.logger.Info("Waiting for EC2 Instance to be Running...")
 							Expect(ec2.WaitForEC2InstanceRunning(ctx, test.ec2Client, instance.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
 
