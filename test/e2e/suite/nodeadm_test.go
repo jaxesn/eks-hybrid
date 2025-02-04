@@ -90,8 +90,9 @@ type peeredVPCTest struct {
 	s3Client        *s3v2.Client
 	iamClient       *iam.Client
 
-	logger     logr.Logger
-	logsBucket string
+	logger        logr.Logger
+	loggerControl e2e.PausableLogger
+	logsBucket    string
 
 	cluster         *peered.HybridCluster
 	stackOut        *credentials.StackOutput
@@ -118,7 +119,7 @@ var _ = SynchronizedBeforeSuite(
 		config, err := readTestConfig(filePath)
 		Expect(err).NotTo(HaveOccurred(), "should read valid test configuration")
 
-		logger := newLoggerForTests()
+		logger := newLoggerForTests().Logger
 		aws, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(config.ClusterRegion))
 		Expect(err).NotTo(HaveOccurred())
 
@@ -231,19 +232,19 @@ var _ = Describe("Hybrid Nodes", func() {
 		})
 
 		When("using ec2 instance as hybrid nodes", func() {
-			for _, os := range osList {
+			for _, nodeOS := range osList {
 			providerLoop:
 				for _, provider := range credentialProviders {
-					if notSupported.matches(os.Name(), provider.Name()) {
+					if notSupported.matches(nodeOS.Name(), provider.Name()) {
 						continue providerLoop
 					}
 
 					DescribeTable("Joining a node",
-						func(ctx context.Context, os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) {
-							Expect(os).NotTo(BeNil())
+						func(ctx context.Context, nodeOS e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) {
+							Expect(nodeOS).NotTo(BeNil())
 							Expect(provider).NotTo(BeNil())
 
-							instanceName := test.instanceName("init", os, provider)
+							instanceName := test.instanceName("init", nodeOS, provider)
 
 							k8sVersion := test.cluster.KubernetesVersion
 							if test.overrideNodeK8sVersion != "" {
@@ -255,7 +256,7 @@ var _ = Describe("Hybrid Nodes", func() {
 								InstanceName:   instanceName,
 								NodeK8sVersion: k8sVersion,
 								NodeNamePrefix: "simpleflow",
-								OS:             os,
+								OS:             nodeOS,
 								Provider:       provider,
 							})
 							Expect(err).NotTo(HaveOccurred(), "EC2 Instance should have been created successfully")
@@ -263,15 +264,22 @@ var _ = Describe("Hybrid Nodes", func() {
 								Expect(peeredNode.Cleanup(ctx, instance)).To(Succeed())
 							}, NodeTimeout(deferCleanupTimeout))
 
-							Expect(peeredNode.CaptureEC2SerialOutput(ctx, instance.ID)).To(Succeed(), "EC2 Instance Connect should have succeeded")
-							test.logger.Info("Waiting for EC2 Instance to be Running...")
-							Expect(ec2.WaitForEC2InstanceRunning(ctx, test.ec2Client, instance.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
-
 							verifyNode := test.newVerifyNode(instance.IP)
-							Expect(verifyNode.Run(ctx)).To(
-								Succeed(), "node should have joined the cluster successfully"+
-									". You can access the collected node logs at: %s", peeredNode.S3LogsURL(instance.Name),
-							)
+
+							serialOutput, err := peered.NewSerialOutputBlock(ctx, peeredNode, instance, test.loggerControl)
+							Expect(err).NotTo(HaveOccurred(), "should prepare serial output")
+							DeferCleanup(func() {
+								serialOutput.Close()
+							})
+
+							serialOutput.It("joins the cluster", func() {
+								test.logger.Info("Waiting for EC2 Instance to be Running...")
+								Expect(ec2.WaitForEC2InstanceRunning(ctx, test.ec2Client, instance.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
+								Expect(verifyNode.Run(ctx)).To(
+									Succeed(), "node should have joined the cluster successfully"+
+										". You can access the collected node logs at: %s", peeredNode.S3LogsURL(instance.Name),
+								)
+							})
 
 							test.logger.Info("Testing Pod Identity add-on functionality")
 							verifyPodIdentityAddon := test.newVerifyPodIdentityAddon()
@@ -286,10 +294,12 @@ var _ = Describe("Hybrid Nodes", func() {
 							Expect(nodeadm.RebootInstance(ctx, test.remoteCommandRunner, instance.IP)).NotTo(HaveOccurred(), "EC2 Instance should have rebooted successfully")
 							test.logger.Info("EC2 Instance rebooted successfully.")
 
-							Expect(verifyNode.Run(ctx)).To(Succeed(),
-								"node should have re-joined, there must be a problem with uninstall"+
-									". You can access the collected node logs at: %s", peeredNode.S3LogsURL(instance.Name),
-							)
+							serialOutput.It("re-joins the cluster after reboot", func() {
+								Expect(verifyNode.Run(ctx)).To(Succeed(),
+									"node should have re-joined, there must be a problem with uninstall"+
+										". You can access the collected node logs at: %s", peeredNode.S3LogsURL(instance.Name),
+								)
+							})
 
 							if test.skipCleanup {
 								test.logger.Info("Skipping nodeadm uninstall from the hybrid node...")
@@ -298,7 +308,7 @@ var _ = Describe("Hybrid Nodes", func() {
 
 							Expect(cleanNode.Run(ctx)).To(Succeed(), "node should have been reset successfully")
 						},
-						Entry(fmt.Sprintf("With OS %s and with Credential Provider %s", os.Name(), string(provider.Name())), os, provider, Label(os.Name(), string(provider.Name()), "simpleflow", "init")),
+						Entry(fmt.Sprintf("With OS %s and with Credential Provider %s", nodeOS.Name(), string(provider.Name())), nodeOS, provider, Label(nodeOS.Name(), string(provider.Name()), "simpleflow", "init")),
 					)
 
 					DescribeTable("Upgrade nodeadm flow",
@@ -332,10 +342,19 @@ var _ = Describe("Hybrid Nodes", func() {
 							}, NodeTimeout(deferCleanupTimeout))
 
 							verifyNode := test.newVerifyNode(instance.IP)
-							Expect(verifyNode.Run(ctx)).To(
-								Succeed(), "node should have joined the cluster successfully"+
-									". You can access the collected node logs at: %s", peeredNode.S3LogsURL(instance.Name),
-							)
+
+							serialOutput, err := peered.NewSerialOutputBlock(ctx, peeredNode, instance, test.loggerControl)
+							Expect(err).NotTo(HaveOccurred(), "should prepare serial output")
+							DeferCleanup(func() {
+								serialOutput.Close()
+							})
+
+							serialOutput.It("joins the cluster", func() {
+								Expect(verifyNode.Run(ctx)).To(
+									Succeed(), "node should have joined the cluster successfully"+
+										". You can access the collected node logs at: %s", peeredNode.S3LogsURL(instance.Name),
+								)
+							})
 
 							Expect(test.newUpgradeNode(instance.IP).Run(ctx)).To(
 								Succeed(), "node should have upgraded successfully"+
@@ -349,7 +368,7 @@ var _ = Describe("Hybrid Nodes", func() {
 								Succeed(), "node should have been reset successfully",
 							)
 						},
-						Entry(fmt.Sprintf("With OS %s and with Credential Provider %s", os.Name(), string(provider.Name())), os, provider, Label(os.Name(), string(provider.Name()), "upgradeflow")),
+						Entry(fmt.Sprintf("With OS %s and with Credential Provider %s", nodeOS.Name(), string(provider.Name())), nodeOS, provider, Label(nodeOS.Name(), string(provider.Name()), "upgradeflow")),
 					)
 				}
 			}
@@ -373,9 +392,11 @@ func readTestConfig(configPath string) (*TestConfig, error) {
 }
 
 func buildPeeredVPCTestForSuite(ctx context.Context, suite *suiteConfiguration) (*peeredVPCTest, error) {
+	pausableLogger := newLoggerForTests()
 	test := &peeredVPCTest{
 		stackOut:               suite.CredentialsStackOutput,
-		logger:                 newLoggerForTests(),
+		logger:                 pausableLogger.Logger,
+		loggerControl:          pausableLogger,
 		logsBucket:             suite.TestConfig.LogsBucket,
 		overrideNodeK8sVersion: suite.TestConfig.NodeK8sVersion,
 		publicKey:              suite.PublicKey,
@@ -503,11 +524,11 @@ func (t *peeredVPCTest) newVerifyPodIdentityAddon() *addon.VerifyPodIdentityAddo
 	}
 }
 
-func newLoggerForTests() logr.Logger {
+func newLoggerForTests() e2e.PausableLogger {
 	_, reporter := GinkgoConfiguration()
 	cfg := e2e.LoggerConfig{}
 	if reporter.NoColor {
 		cfg.NoColor = true
 	}
-	return e2e.NewLogger(cfg)
+	return e2e.NewPausableLogger(cfg)
 }
