@@ -27,6 +27,10 @@ func (s *SsmProvider) Name() creds.CredentialProvider {
 	return creds.SsmCredentialProvider
 }
 
+func (s *SsmProvider) NodeName(e2e.NodeSpec) string {
+	return ""
+}
+
 func (s *SsmProvider) NodeadmConfig(ctx context.Context, node e2e.NodeSpec) (*api.NodeConfig, error) {
 	ssmActivationDetails, err := createSSMActivation(ctx, s.SSM, s.Role, ssmActivationName, node.Cluster.Name)
 	if err != nil {

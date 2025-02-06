@@ -1,0 +1,26 @@
+[settings.kubernetes]
+api-server = "{{ .KubernetesAPIServer }}"
+authentication-mode = "aws"
+cloud-provider = "external"
+
+hostname-override = "{{ .HostName}}"
+provider-id = "eks-hybrid:///{{ .Region }}/{{ .ClusterName }}/{{ .HostName}}"
+
+[settings.kubernetes.node-labels]
+"eks.amazonaws.com/compute-type" = "hybrid"
+"eks.amazonaws.com/hybrid-credential-provider" = "iam-ra"
+
+[settings.network]
+hostname = "{{ .HostName }}"
+
+[settings.aws]
+config = "{{ .AWSConfig }}"
+
+[settings.host-containers.admin]
+enabled = true
+source = "public.ecr.aws/bottlerocket/bottlerocket-admin:v0.11.16"
+user-data = "{{ .AdminContainerUserData }}"
+
+[settings.host-containers.control]
+enabled = true
+source = "public.ecr.aws/bottlerocket/bottlerocket-control:v0.7.20"

@@ -23,11 +23,17 @@ type UserDataInput struct {
 	CredsProviderName string
 	KubernetesVersion string
 	NodeadmUrls       NodeadmURLs
+	NodeadmConfig     *api.NodeConfig
 	NodeadmConfigYaml string
 	Provider          string
 	PublicKey         string
 	RootPasswordHash  string
 	Files             []File
+
+	KubernetesAPIServer string
+	HostName            string
+	Region              string
+	ClusterName         string
 }
 
 type NodeadmURLs struct {
@@ -49,6 +55,7 @@ type File struct {
 
 type NodeadmCredentialsProvider interface {
 	Name() creds.CredentialProvider
+	NodeName(NodeSpec) string
 	NodeadmConfig(ctx context.Context, node NodeSpec) (*api.NodeConfig, error)
 	VerifyUninstall(ctx context.Context, instanceId string) error
 	FilesForNode(spec NodeSpec) ([]File, error)
