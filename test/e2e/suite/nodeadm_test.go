@@ -139,6 +139,9 @@ var _ = SynchronizedBeforeSuite(
 				return
 			}
 			Expect(infra.Teardown(ctx)).To(Succeed(), "should teardown e2e resources")
+			if cleanupAllNodesAfer {
+				// loop kube nodes api and delete
+			}
 		}, NodeTimeout(deferCleanupTimeout))
 
 		suiteJson, err := yaml.Marshal(
@@ -169,6 +172,19 @@ var _ = SynchronizedBeforeSuite(
 		Expect(suite.CredentialsStackOutput).NotTo(BeNil(), "ec2 stack output should have been set")
 	},
 )
+
+// var (
+// 	peeredNode *peered.Node
+// 	instance   ec2.Instance
+// )
+
+// var instance
+// var _ = SynchronizedAfterSuite(func(ctx context.Context) {
+// 	// runs on *all* processes
+// 	Expect(peeredNode.Cleanup(ctx, instance)).To(Succeed())
+// }, func() {
+// 	// runs *only* on process #1
+// })
 
 var _ = Describe("Hybrid Nodes", func() {
 	osList := []e2e.NodeadmOS{
@@ -390,8 +406,83 @@ var _ = Describe("Hybrid Nodes", func() {
 						},
 						Entry(fmt.Sprintf("With OS %s and with Credential Provider %s", nodeOS.Name(), string(provider.Name())), nodeOS, provider, Label(nodeOS.Name(), string(provider.Name()), "upgradeflow")),
 					)
+
 				}
 			}
+
+			Describe("running node conformance",
+				func() {
+					cleanupAlNodesAfter = true
+					// Creates and joins node for each OS/Version/Provider then runs
+					// conformance tests using hydrophone
+					var entries []TableEntry
+					for _, nodeOS := range osList {
+					providerLoop:
+						for _, provider := range credentialProviders {
+							if notSupported.matches(nodeOS.Name(), provider.Name()) {
+								continue providerLoop
+							}
+							entries = append(entries, Entry(fmt.Sprintf("With OS %s and with Credential Provider %s", nodeOS.Name(), provider.Name()), nodeOS, provider))
+						}
+					}
+					DescribeTable("Creating a node", func(ctx context.Context, nodeOS e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) {
+						test.logger.Info(fmt.Sprintf("Creating node: %s", nodeOS.Name()))
+						Expect(nodeOS).NotTo(BeNil())
+						Expect(provider).NotTo(BeNil())
+
+						instanceName := test.instanceName("conformance", nodeOS, provider)
+
+						k8sVersion := test.cluster.KubernetesVersion
+						if test.overrideNodeK8sVersion != "" {
+							k8sVersion = suite.TestConfig.NodeK8sVersion
+						}
+
+						peeredNode := test.newPeeredNode()
+						instance, err := peeredNode.Create(ctx, &peered.NodeSpec{
+							InstanceName:   instanceName,
+							NodeK8sVersion: k8sVersion,
+							NodeNamePrefix: "conformance",
+							OS:             nodeOS,
+							Provider:       provider,
+						})
+						Expect(err).NotTo(HaveOccurred(), "EC2 Instance should have been created successfully")
+						// testCleanup.Register(func(ctx context.Context) {
+						// 	Expect(peeredNode.Cleanup(ctx, instance)).To(Succeed())
+						// })
+
+						verifyNode := test.newVerifyNode(instance.IP)
+
+						serialOutput := peered.NewSerialOutputBlockBestEffort(ctx, &peered.SerialOutputConfig{
+							PeeredNode:   peeredNode,
+							Instance:     instance,
+							TestLogger:   test.loggerControl,
+							OutputFolder: test.artifactsPath,
+						})
+						Expect(err).NotTo(HaveOccurred(), "should prepare serial output")
+						DeferCleanup(func() {
+							serialOutput.Close()
+						})
+
+						serialOutput.It("joins the cluster", func() {
+							test.logger.Info("Waiting for EC2 Instance to be Running...")
+							Expect(ec2.WaitForEC2InstanceRunning(ctx, test.ec2Client, instance.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
+							Expect(verifyNode.WaitForNodeReady(ctx)).Error().To(
+								Succeed(), "node should have joined the cluster successfully"+
+									". You can access the collected node logs at: %s", peeredNode.S3LogsURL(instance.Name),
+							)
+						})
+
+						Expect(verifyNode.Run(ctx)).To(Succeed(), "node should be fully functional")
+					}, entries)
+
+					It("runs conformance", Serial, SpecTimeout(3*time.Hour), func(ctx context.Context) {
+						test.logger.Info("Running NodeConformance tests...")
+						conformance := kubernetes.NewConformanceTest(test.k8sClientConfig, test.k8sClient, test.logger)
+						Expect(conformance.Run(ctx)).To(
+							Succeed(), "node conformance should have run successfully",
+						)
+					})
+				}, Label("nodeconformance"))
 		})
 	})
 })

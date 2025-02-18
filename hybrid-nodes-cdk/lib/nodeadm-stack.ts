@@ -585,6 +585,42 @@ export class NodeadmBuildStack extends cdk.Stack {
       }
     }
 
+    const nodeConformanceTestsActions: Array<codepipeline_actions.CodeBuildAction> = [];
+    
+    const os = {
+      al: ["23"],
+      rhel: ["8", "9"],
+      ubuntu: ["2004", "2204", "2404"]
+    }
+
+    for (const kubeVersion of kubernetesVersions) {
+      for (const cni of cnis) {
+        const actionName = `kube-${kubeVersion.replace('.', '-')}-${cni}`;
+
+        const e2eTestsAction = new codepipeline_actions.CodeBuildAction({
+          actionName: actionName,
+          input: buildOutput,
+          project: integrationTestProject,
+          environmentVariables: {
+            KUBERNETES_VERSION: {
+              value: kubeVersion,
+            },
+            CNI: {
+              value: cni,
+            },
+            ...(betaKubeVersions.includes(kubeVersion)
+              ? {
+                  ENDPOINT: {
+                    value: betaEksEndpoint,
+                  },
+                }
+              : {}),
+          },
+        });
+        e2eTestsActions.push(e2eTestsAction);
+      }
+    }
+
     const codeBuildReleaseProject = new codebuild.PipelineProject(this, 'nodeadm-upload-artifacts', {
       projectName: 'nodeadm-upload-artifacts',
       buildSpec: codebuild.BuildSpec.fromSourceFilename('buildspecs/dev-release-nodeadm.yml'),
