@@ -31,7 +31,6 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/addon"
 	"github.com/aws/eks-hybrid/test/e2e/cluster"
 	"github.com/aws/eks-hybrid/test/e2e/commands"
-	"github.com/aws/eks-hybrid/test/e2e/constants"
 	"github.com/aws/eks-hybrid/test/e2e/credentials"
 	"github.com/aws/eks-hybrid/test/e2e/ec2"
 	"github.com/aws/eks-hybrid/test/e2e/kubernetes"
@@ -495,7 +494,7 @@ func buildPeeredVPCTestForSuite(ctx context.Context, suite *suiteConfiguration) 
 	}
 	test.nodeadmURLs = *urls
 
-	test.podIdentityS3Bucket, err = getPodIdentityS3Bucket(ctx, test.cluster.Name, test.s3Client)
+	test.podIdentityS3Bucket, err = peered.PodIdentityBucket(ctx, test.s3Client, test.cluster.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -588,38 +587,4 @@ func newLoggerForTests() e2e.PausableLogger {
 		cfg.NoColor = true
 	}
 	return e2e.NewPausableLogger(cfg)
-}
-
-func getPodIdentityS3Bucket(ctx context.Context, cluster string, client *s3v2.Client) (string, error) {
-	listBucketsOutput, err := client.ListBuckets(ctx, &s3v2.ListBucketsInput{
-		Prefix: aws.String(addon.PodIdentityS3BucketPrefix),
-	})
-	if err != nil {
-		return "", err
-	}
-
-	for _, bucket := range listBucketsOutput.Buckets {
-		getBucketTaggingOutput, err := client.GetBucketTagging(ctx, &s3v2.GetBucketTaggingInput{
-			Bucket: bucket.Name,
-		})
-		if err != nil {
-			return "", err
-		}
-
-		var foundClusterTag, foundPodIdentityTag bool
-		for _, tag := range getBucketTaggingOutput.TagSet {
-			if *tag.Key == constants.TestClusterTagKey && *tag.Value == cluster {
-				foundClusterTag = true
-			}
-
-			if *tag.Key == addon.PodIdentityS3BucketPrefix && *tag.Value == "true" {
-				foundPodIdentityTag = true
-			}
-
-			if foundClusterTag && foundPodIdentityTag {
-				return *bucket.Name, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("S3 bucket for pod identity not found")
 }
