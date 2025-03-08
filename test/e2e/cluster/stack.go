@@ -244,7 +244,7 @@ func (s *stack) deploy(ctx context.Context, test TestResources) (*resourcesStack
 }
 
 func stackName(clusterName string) string {
-	return fmt.Sprintf("EKSHybridCI-Arch-%s", clusterName)
+	return fmt.Sprintf("%s-%s", constants.TestArchitectureStackNamePrefix, clusterName)
 }
 
 func waitForStackOperation(ctx context.Context, client *cloudformation.Client, stackName string) error {
@@ -301,13 +301,15 @@ func (s *stack) delete(ctx context.Context, clusterName string) error {
 		return fmt.Errorf("deleting hybrid nodes setup cfn stack: %w", err)
 	}
 
-	s.logger.Info("Waiting for stack to be deleted", "stackName", stackName)
-	if err := waitForStackOperation(ctx, s.cfn, stackName); err != nil {
-		return fmt.Errorf("waiting for hybrid nodes setup cfn stack to be deleted: %w", err)
+		s.logger.Info("Waiting for stack to be deleted", "stackName", stackName)
+		if err := waitForStackOperation(ctx, s.cfn, stackName); err != nil {
+			stackErr = fmt.Errorf("waiting for hybrid nodes setup cfn stack to be deleted: %w", err)
+			continue
+		}
+		s.logger.Info("E2E test cluster stack deleted successfully", "stackName", stackName)
 	}
 
-	s.logger.Info("E2E test cluster stack deleted successfully", "stackName", stackName)
-	return nil
+	return stackErr
 }
 
 func emptyS3Bucket(ctx context.Context, client *s3.Client, bucket *string) error {
