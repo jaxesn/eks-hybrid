@@ -2,6 +2,7 @@ package addon
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -66,6 +67,7 @@ func (p PodIdentityAddon) Create(ctx context.Context, logger logr.Logger, eksCli
 }
 
 func (p PodIdentityAddon) UploadFileForVerification(ctx context.Context, logger logr.Logger, client *s3.Client, bucket string) error {
+	fmt.Println("Uploading file for verification", bucketObjectKey, bucketObjectContent, bucket)
 	if _, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(bucketObjectKey),
