@@ -246,7 +246,7 @@ var _ = Describe("Hybrid Nodes", func() {
 							peeredNode := test.newPeeredNode()
 
 							var verifyNode *kubernetes.VerifyNode
-							var serialOutput peered.ItBlockCloser
+							var serialOutput ItBlockCloser
 							var instance ec2.Instance
 
 							flakyCode := &FlakyCode{
@@ -271,7 +271,7 @@ var _ = Describe("Hybrid Nodes", func() {
 
 								verifyNode = test.newVerifyNode(instance.IP)
 
-								serialOutput = peered.NewSerialOutputBlockBestEffort(ctx, &peered.SerialOutputConfig{
+								serialOutput = NewSerialOutputBlockBestEffort(ctx, &SerialOutputConfig{
 									PeeredNode:   peeredNode,
 									Instance:     instance,
 									TestLogger:   test.loggerControl,
@@ -361,7 +361,7 @@ var _ = Describe("Hybrid Nodes", func() {
 
 							peeredNode := test.newPeeredNode()
 							var verifyNode *kubernetes.VerifyNode
-							var serialOutput peered.ItBlockCloser
+							var serialOutput ItBlockCloser
 							var instance ec2.Instance
 
 							flakyCode := &FlakyCode{
@@ -386,7 +386,7 @@ var _ = Describe("Hybrid Nodes", func() {
 
 								verifyNode = test.newVerifyNode(instance.IP)
 
-								serialOutput = peered.NewSerialOutputBlockBestEffort(ctx, &peered.SerialOutputConfig{
+								serialOutput = NewSerialOutputBlockBestEffort(ctx, &SerialOutputConfig{
 									PeeredNode:   peeredNode,
 									Instance:     instance,
 									TestLogger:   test.loggerControl,
