@@ -170,7 +170,7 @@ var _ = Describe("Hybrid Nodes", func() {
 		osystem.NewUbuntu2204ARM(),
 		osystem.NewUbuntu2204DockerSource(),
 		osystem.NewUbuntu2404AMD(),
-		osystem.NewUbuntu2404ARM(),
+		osystem.NewUbuntu2404ARM(),q
 		osystem.NewUbuntu2404DockerSource(),
 		osystem.NewAmazonLinux2023AMD(),
 		osystem.NewAmazonLinux2023ARM(),
@@ -178,6 +178,7 @@ var _ = Describe("Hybrid Nodes", func() {
 		osystem.NewRedHat8ARM(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
 		osystem.NewRedHat9AMD(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
 		osystem.NewRedHat9ARM(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
+		osystem.NewBottleRocket(),
 	}
 	credentialProviders := []e2e.NodeadmCredentialsProvider{
 		&credentials.SsmProvider{},
@@ -191,6 +192,10 @@ var _ = Describe("Hybrid Nodes", func() {
 		},
 		{
 			matchOS:            osystem.IsRHEL8,
+			matchCredsProvider: credentials.IsIAMRolesAnywhere,
+		},
+		{
+			matchOS:            osystem.IsBottlerocket,
 			matchCredsProvider: credentials.IsIAMRolesAnywhere,
 		},
 	}
@@ -274,7 +279,7 @@ var _ = Describe("Hybrid Nodes", func() {
 									if credentials.IsSsm(provider.Name()) {
 										Expect(peeredNode.CleanupSSMActivation(ctx, nodeName, test.cluster.Name)).To(Succeed())
 									}
-									Expect(peeredNode.Cleanup(ctx, instance)).To(Succeed())
+									Expect(peeredNode.Cleanup(ctx, instance, nodeOS.Name())).To(Succeed())
 								}, NodeTimeout(deferCleanupTimeout))
 
 								verifyNode = test.newVerifyNode(instance.IP)
@@ -318,16 +323,21 @@ var _ = Describe("Hybrid Nodes", func() {
 
 							Expect(verifyNode.Run(ctx)).To(Succeed(), "node should be fully functional")
 
-							test.logger.Info("Testing Pod Identity add-on functionality")
-							verifyPodIdentityAddon := test.newVerifyPodIdentityAddon(instance.IP)
-							Expect(verifyPodIdentityAddon.Run(ctx)).To(Succeed(), "pod identity add-on should be created successfully")
+							// TODO: Remove check when EKS Pod identity agent add-on supports
+							// configuring volumes to a writeable location on the Bottlerocket
+							// node.
+							if !osystem.IsBottlerocket(nodeOS.Name()) {
+								test.logger.Info("Testing Pod Identity add-on functionality")
+								verifyPodIdentityAddon := test.newVerifyPodIdentityAddon(instance.IP)
+								Expect(verifyPodIdentityAddon.Run(ctx)).To(Succeed(), "pod identity add-on should be created successfully")
+							}
 
 							test.logger.Info("Resetting hybrid node...")
-							cleanNode := test.newCleanNode(provider, instance.IP)
+							cleanNode := test.newCleanNode(nodeOS, provider, instance.IP)
 							Expect(cleanNode.Run(ctx)).To(Succeed(), "node should have been reset successfully")
 
 							test.logger.Info("Rebooting EC2 Instance.")
-							Expect(nodeadm.RebootInstance(ctx, test.remoteCommandRunner, instance.IP)).NotTo(HaveOccurred(), "EC2 Instance should have rebooted successfully")
+							Expect(nodeadm.RebootInstance(ctx, test.remoteCommandRunner, instance.IP, nodeOS.Name())).NotTo(HaveOccurred(), "EC2 Instance should have rebooted successfully")
 							test.logger.Info("EC2 Instance rebooted successfully.")
 
 							serialOutput.It("re-joins the cluster after reboot", func() {
@@ -393,7 +403,7 @@ var _ = Describe("Hybrid Nodes", func() {
 									if credentials.IsSsm(provider.Name()) {
 										Expect(peeredNode.CleanupSSMActivation(ctx, nodeName, test.cluster.Name)).To(Succeed())
 									}
-									Expect(peeredNode.Cleanup(ctx, instance)).To(Succeed())
+									Expect(peeredNode.Cleanup(ctx, instance, os.Name())).To(Succeed())
 								}, NodeTimeout(deferCleanupTimeout))
 
 								verifyNode = test.newVerifyNode(instance.IP)
@@ -442,7 +452,7 @@ var _ = Describe("Hybrid Nodes", func() {
 							Expect(verifyNode.Run(ctx)).To(Succeed(), "node should have joined the cluster successfully after nodeadm upgrade")
 
 							test.logger.Info("Resetting hybrid node...")
-							Expect(test.newCleanNode(provider, instance.IP).Run(ctx)).To(
+							Expect(test.newCleanNode(os, provider, instance.IP).Run(ctx)).To(
 								Succeed(), "node should have been reset successfully",
 							)
 						},
@@ -525,6 +535,7 @@ func (t *peeredVPCTest) newPeeredNode() *peered.Node {
 			AWS:             t.aws,
 			EC2:             t.ec2Client,
 			SSM:             t.ssmClient,
+			K8sClientConfig: t.k8sClientConfig,
 			Logger:          t.logger,
 			Cluster:         t.cluster,
 			NodeadmURLs:     t.nodeadmURLs,
@@ -555,10 +566,11 @@ func (t *peeredVPCTest) newVerifyNode(nodeIP string) *kubernetes.VerifyNode {
 	}
 }
 
-func (t *peeredVPCTest) newCleanNode(provider e2e.NodeadmCredentialsProvider, nodeIP string) *nodeadm.CleanNode {
+func (t *peeredVPCTest) newCleanNode(os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider, nodeIP string) *nodeadm.CleanNode {
 	return &nodeadm.CleanNode{
 		K8s:                 t.k8sClient,
 		RemoteCommandRunner: t.remoteCommandRunner,
+		OS:                  os,
 		Verifier:            provider,
 		Logger:              t.logger,
 		NodeIP:              nodeIP,
