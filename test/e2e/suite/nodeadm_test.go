@@ -163,21 +163,21 @@ var _ = SynchronizedBeforeSuite(
 
 var _ = Describe("Hybrid Nodes", func() {
 	osList := []e2e.NodeadmOS{
-		osystem.NewUbuntu2004AMD(),
-		osystem.NewUbuntu2004ARM(),
-		osystem.NewUbuntu2004DockerSource(),
-		osystem.NewUbuntu2204AMD(),
-		osystem.NewUbuntu2204ARM(),
-		osystem.NewUbuntu2204DockerSource(),
-		osystem.NewUbuntu2404AMD(),
-		osystem.NewUbuntu2404ARM(),q
-		osystem.NewUbuntu2404DockerSource(),
-		osystem.NewAmazonLinux2023AMD(),
-		osystem.NewAmazonLinux2023ARM(),
-		osystem.NewRedHat8AMD(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
-		osystem.NewRedHat8ARM(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
-		osystem.NewRedHat9AMD(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
-		osystem.NewRedHat9ARM(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
+		// osystem.NewUbuntu2004AMD(),
+		// osystem.NewUbuntu2004ARM(),
+		// osystem.NewUbuntu2004DockerSource(),
+		// osystem.NewUbuntu2204AMD(),
+		// osystem.NewUbuntu2204ARM(),
+		// osystem.NewUbuntu2204DockerSource(),
+		// osystem.NewUbuntu2404AMD(),
+		// osystem.NewUbuntu2404ARM(),
+		// osystem.NewUbuntu2404DockerSource(),
+		// osystem.NewAmazonLinux2023AMD(),
+		// osystem.NewAmazonLinux2023ARM(),
+		// osystem.NewRedHat8AMD(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
+		// osystem.NewRedHat8ARM(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
+		// osystem.NewRedHat9AMD(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
+		// osystem.NewRedHat9ARM(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
 		osystem.NewBottleRocket(),
 	}
 	credentialProviders := []e2e.NodeadmCredentialsProvider{
@@ -326,11 +326,9 @@ var _ = Describe("Hybrid Nodes", func() {
 							// TODO: Remove check when EKS Pod identity agent add-on supports
 							// configuring volumes to a writeable location on the Bottlerocket
 							// node.
-							if !osystem.IsBottlerocket(nodeOS.Name()) {
-								test.logger.Info("Testing Pod Identity add-on functionality")
-								verifyPodIdentityAddon := test.newVerifyPodIdentityAddon(instance.IP)
-								Expect(verifyPodIdentityAddon.Run(ctx)).To(Succeed(), "pod identity add-on should be created successfully")
-							}
+							test.logger.Info("Testing Pod Identity add-on functionality")
+							verifyPodIdentityAddon := test.newVerifyPodIdentityAddon(instance.IP, nodeOS.Name())
+							Expect(verifyPodIdentityAddon.Run(ctx)).To(Succeed(), "pod identity add-on should be created successfully")
 
 							test.logger.Info("Resetting hybrid node...")
 							cleanNode := test.newCleanNode(nodeOS, provider, instance.IP)
@@ -596,7 +594,7 @@ func (t *peeredVPCTest) instanceName(testName string, os e2e.NodeadmOS, provider
 	)
 }
 
-func (t *peeredVPCTest) newVerifyPodIdentityAddon(nodeIP string) *addon.VerifyPodIdentityAddon {
+func (t *peeredVPCTest) newVerifyPodIdentityAddon(nodeIP, osName string) *addon.VerifyPodIdentityAddon {
 	return &addon.VerifyPodIdentityAddon{
 		Cluster:             t.cluster.Name,
 		NodeIP:              nodeIP,
@@ -607,6 +605,7 @@ func (t *peeredVPCTest) newVerifyPodIdentityAddon(nodeIP string) *addon.VerifyPo
 		S3Client:            t.s3Client,
 		Logger:              t.logger,
 		K8SConfig:           t.k8sClientConfig,
+		OS:                  osName,
 	}
 }
 

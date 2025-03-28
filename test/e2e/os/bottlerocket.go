@@ -100,7 +100,7 @@ func (a BottleRocket) BuildUserData(userDataInput e2e.UserDataInput) ([]byte, er
 	`, userDataInput.NodeadmConfig.Spec.Hybrid.IAMRolesAnywhere.ProfileARN, userDataInput.NodeadmConfig.Spec.Hybrid.IAMRolesAnywhere.RoleARN, userDataInput.NodeadmConfig.Spec.Hybrid.IAMRolesAnywhere.TrustAnchorARN, userDataInput.HostName)
 	}
 	if userDataInput.NodeadmConfig.Spec.Hybrid.SSM != nil {
-		bootstrapContainerCommand = fmt.Sprintf("eks-hybrid-ssm-setup --activation-id=%q --activation-code=%q --region=%q", userDataInput.NodeadmConfig.Spec.Hybrid.SSM.ActivationID, userDataInput.NodeadmConfig.Spec.Hybrid.SSM.ActivationCode, userDataInput.Region)
+		bootstrapContainerCommand = fmt.Sprintf("eks-hybrid-ssm-setup --activation-id=%q --activation-code=%q --region=%q --enable-credentials-file=%t", userDataInput.NodeadmConfig.Spec.Hybrid.SSM.ActivationID, userDataInput.NodeadmConfig.Spec.Hybrid.SSM.ActivationCode, userDataInput.Region, userDataInput.NodeadmConfig.Spec.Hybrid.EnableCredentialsFile)
 	}
 	data := brSettingsTomlInitData{
 		UserDataInput:           userDataInput,
