@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	clientgo "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -37,17 +40,30 @@ func (v VerifyNode) WaitForNodeReady(ctx context.Context) (*corev1.Node, error) 
 	}
 
 	var internalAddress string
-	for _, address := range node.Status.Addresses {
-		if address.Type == "InternalIP" {
-			internalAddress = address.Address
-			break
+	err = wait.PollUntilContextTimeout(ctx, 1*time.Second, 30*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		// Refresh node to get latest status
+		node, err = v.K8s.CoreV1().Nodes().Get(ctx, node.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("getting node: %w", err)
 		}
+
+		for _, address := range node.Status.Addresses {
+			if address.Type == "InternalIP" {
+				internalAddress = address.Address
+				break
+			}
+		}
+		if internalAddress == "" {
+			return false, nil // continue polling
+		}
+		return true, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("waiting for node internal IP: %w", err)
 	}
-	if internalAddress == "" {
-		return nil, fmt.Errorf("node InternalIP missing from node status. All Addresses: %v", node.Status.Addresses)
-	}
+
 	if internalAddress != v.NodeIP {
-		return nil, fmt.Errorf("node InternalIP %s does not match expected instance IP %s. Inspect the nodes `ifconfig.txt` log file. All Addresses: %v", internalAddress, v.NodeIP, node.Status.Addresses)
+		return nil, fmt.Errorf("node internal IP %s does not match expected instance IP %s. Inspect the nodes `ifconfig.txt` log file", internalAddress, v.NodeIP)
 	}
 
 	nodeName := node.Name

@@ -323,8 +323,8 @@ func DeleteNode(ctx context.Context, k8s *kubernetes.Clientset, name string) err
 	return nil
 }
 
-func EnsureNodeWithE2ELabelIsDeleted(ctx context.Context, k8s *kubernetes.Clientset, instanceName string) error {
-	node, err := getNodeByE2ELabelName(ctx, k8s, instanceName)
+func EnsureNodeWithE2ELabelIsDeleted(ctx context.Context, k8s *kubernetes.Clientset, nodeName string) error {
+	node, err := getNodeByE2ELabelName(ctx, k8s, nodeName)
 	if err != nil {
 		return fmt.Errorf("getting node by e2e label: %w", err)
 	}

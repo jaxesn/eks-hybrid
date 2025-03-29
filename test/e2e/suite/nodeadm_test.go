@@ -28,6 +28,11 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/yaml"
 
+	"github.com/aws/eks-hybrid/internal/ec2"
+	"github.com/aws/eks-hybrid/internal/kubernetes"
+	"github.com/aws/eks-hybrid/internal/nodeadm"
+	"github.com/aws/eks-hybrid/internal/peered"
+	"github.com/aws/eks-hybrid/internal/ssm"
 	"github.com/aws/eks-hybrid/test/e2e"
 	"github.com/aws/eks-hybrid/test/e2e/addon"
 	"github.com/aws/eks-hybrid/test/e2e/cluster"
@@ -38,6 +43,7 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/kubernetes"
 	"github.com/aws/eks-hybrid/test/e2e/nodeadm"
 	osystem "github.com/aws/eks-hybrid/test/e2e/os"
+	"github.com/aws/eks-hybrid/test/e2e/osystem"
 	"github.com/aws/eks-hybrid/test/e2e/peered"
 	"github.com/aws/eks-hybrid/test/e2e/s3"
 	"github.com/aws/eks-hybrid/test/e2e/ssm"
@@ -300,7 +306,25 @@ var _ = Describe("Hybrid Nodes", func() {
 								serialOutput.It("joins the cluster", func() {
 									test.logger.Info("Waiting for EC2 Instance to be Running...")
 									Expect(ec2.WaitForEC2InstanceRunning(ctx, test.ec2Client, node.Instance.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
-									_, err := verifyNode.WaitForNodeReady(ctx)
+
+									// Check if node exists and if instance exists
+									existingNode, err := kubernetes.CheckForNodeWithE2ELabel(ctx, test.k8sClient, nodeName)
+									Expect(err).NotTo(HaveOccurred(), "check for existing node with e2e label")
+									if existingNode != nil {
+										// If node exists, check if instance exists
+										_, err = test.ec2Client.DescribeInstances(ctx, &ec2sdk.DescribeInstancesInput{
+											InstanceIds: []string{node.Instance.ID},
+										})
+										if err != nil {
+											// If instance doesn't exist, we can proceed with the test
+											Expect(kubernetes.DeleteNode(ctx, test.k8sClient, existingNode.Name)).To(Succeed(), "delete existing node")
+										} else {
+											// If instance exists, fail the test as it's not safe to proceed
+											Expect(existingNode).To(BeNil(), "existing node with e2e label should not have been found")
+										}
+									}
+
+									_, err = verifyNode.WaitForNodeReady(ctx)
 									if err != nil {
 										// an ec2 node is considered impaired if the reachability health check fails
 										// in these cases we want to retry by deleting the instance and recreating it
@@ -308,7 +332,7 @@ var _ = Describe("Hybrid Nodes", func() {
 										// to nodeadm or the test itself
 										isImpaired, oErr := ec2.IsEC2InstanceImpaired(ctx, test.ec2Client, node.Instance.ID)
 										if oErr != nil {
-											Expect(oErr).NotTo(HaveOccurred(), "should describe instance status")
+											Expect(err).NotTo(HaveOccurred(), "should describe instance status")
 										}
 										expect := Expect
 										if isImpaired {
@@ -316,7 +340,6 @@ var _ = Describe("Hybrid Nodes", func() {
 										}
 
 										expect(err).To(Succeed(), "node should have joined the cluster successfully")
-
 									}
 								})
 							})
@@ -424,7 +447,25 @@ var _ = Describe("Hybrid Nodes", func() {
 								serialOutput.It("joins the cluster", func() {
 									test.logger.Info("Waiting for EC2 Instance to be Running...")
 									Expect(ec2.WaitForEC2InstanceRunning(ctx, test.ec2Client, node.Instance.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
-									_, err := verifyNode.WaitForNodeReady(ctx)
+
+									// Check if node exists and if instance exists
+									existingNode, err := kubernetes.CheckForNodeWithE2ELabel(ctx, test.k8sClient, nodeName)
+									Expect(err).NotTo(HaveOccurred(), "check for existing node with e2e label")
+									if existingNode != nil {
+										// If node exists, check if instance exists
+										_, err = test.ec2Client.DescribeInstances(ctx, &ec2sdk.DescribeInstancesInput{
+											InstanceIds: []string{node.Instance.ID},
+										})
+										if err != nil {
+											// If instance doesn't exist, we can proceed with the test
+											Expect(kubernetes.DeleteNode(ctx, test.k8sClient, existingNode.Name)).To(Succeed(), "delete existing node")
+										} else {
+											// If instance exists, fail the test as it's not safe to proceed
+											Expect(existingNode).To(BeNil(), "existing node with e2e label should not have been found")
+										}
+									}
+
+									_, err = verifyNode.WaitForNodeReady(ctx)
 									if err != nil {
 										// an ec2 node is considered impaired if the reachability health check fails
 										// in these cases we want to retry by deleting the instance and recreating it
@@ -440,7 +481,6 @@ var _ = Describe("Hybrid Nodes", func() {
 										}
 
 										expect(err).To(Succeed(), "node should have joined the cluster successfully")
-
 									}
 								})
 							})
