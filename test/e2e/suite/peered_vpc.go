@@ -3,6 +3,8 @@ package suite
 import (
 	"context"
 	"fmt"
+	"os"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -16,6 +18,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
+	"gopkg.in/yaml.v2"
 	clientgo "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -24,14 +27,16 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/addon"
 	"github.com/aws/eks-hybrid/test/e2e/cluster"
 	"github.com/aws/eks-hybrid/test/e2e/commands"
+	"github.com/aws/eks-hybrid/test/e2e/constants"
 	"github.com/aws/eks-hybrid/test/e2e/credentials"
 	"github.com/aws/eks-hybrid/test/e2e/nodeadm"
+	osystem "github.com/aws/eks-hybrid/test/e2e/os"
 	"github.com/aws/eks-hybrid/test/e2e/peered"
 	"github.com/aws/eks-hybrid/test/e2e/s3"
 	"github.com/aws/eks-hybrid/test/e2e/ssm"
 )
 
-type suiteConfiguration struct {
+type SuiteConfiguration struct {
 	TestConfig             *e2e.TestConfig          `json:"testConfig"`
 	SkipCleanup            bool                     `json:"skipCleanup"`
 	CredentialsStackOutput *credentials.StackOutput `json:"ec2StackOutput"`
@@ -41,35 +46,35 @@ type suiteConfiguration struct {
 	JumpboxInstanceId      string                   `json:"jumpboxInstanceId"`
 }
 
-type peeredVPCTest struct {
+type PeeredVPCTest struct {
 	aws             aws.Config
 	eksEndpoint     string
 	eksClient       *eks.Client
 	ec2Client       *ec2v2.Client
-	ssmClient       *ssmv2.Client
+	SSMClient       *ssmv2.Client
 	cfnClient       *cloudformation.Client
 	k8sClient       clientgo.Interface
-	k8sClientConfig *rest.Config
+	K8sClientConfig *rest.Config
 	s3Client        *s3v2.Client
 	iamClient       *iam.Client
 
-	logger        logr.Logger
+	Logger        logr.Logger
 	loggerControl e2e.PausableLogger
 	logsBucket    string
-	artifactsPath string
+	ArtifactsPath string
 
-	cluster         *peered.HybridCluster
-	stackOut        *credentials.StackOutput
+	Cluster         *peered.HybridCluster
+	StackOut        *credentials.StackOutput
 	nodeadmURLs     e2e.NodeadmURLs
-	rolesAnywhereCA *credentials.Certificate
+	RolesAnywhereCA *credentials.Certificate
 
-	overrideNodeK8sVersion string
+	OverrideNodeK8sVersion string
 	setRootPassword        bool
-	skipCleanup            bool
+	SkipCleanup            bool
 
 	publicKey string
 
-	remoteCommandRunner commands.RemoteCommandRunner
+	RemoteCommandRunner commands.RemoteCommandRunner
 
 	podIdentityS3Bucket string
 
@@ -79,19 +84,19 @@ type peeredVPCTest struct {
 	failureMessageLogged bool
 }
 
-func buildPeeredVPCTestForSuite(ctx context.Context, suite *suiteConfiguration) (*peeredVPCTest, error) {
-	pausableLogger := newLoggerForTests()
-	test := &peeredVPCTest{
+func BuildPeeredVPCTestForSuite(ctx context.Context, suite *SuiteConfiguration) (*PeeredVPCTest, error) {
+	pausableLogger := NewLoggerForTests()
+	test := &PeeredVPCTest{
 		eksEndpoint:            suite.TestConfig.Endpoint,
-		stackOut:               suite.CredentialsStackOutput,
-		logger:                 pausableLogger.Logger,
+		StackOut:               suite.CredentialsStackOutput,
+		Logger:                 pausableLogger.Logger,
 		loggerControl:          pausableLogger,
 		logsBucket:             suite.TestConfig.LogsBucket,
-		artifactsPath:          suite.TestConfig.ArtifactsFolder,
-		overrideNodeK8sVersion: suite.TestConfig.NodeK8sVersion,
+		ArtifactsPath:          suite.TestConfig.ArtifactsFolder,
+		OverrideNodeK8sVersion: suite.TestConfig.NodeK8sVersion,
 		publicKey:              suite.PublicKey,
 		setRootPassword:        suite.TestConfig.SetRootPassword,
-		skipCleanup:            suite.SkipCleanup,
+		SkipCleanup:            suite.SkipCleanup,
 	}
 
 	aws, err := e2e.NewAWSConfig(ctx, awsconfig.WithRegion(suite.TestConfig.ClusterRegion))
@@ -102,29 +107,29 @@ func buildPeeredVPCTestForSuite(ctx context.Context, suite *suiteConfiguration) 
 	test.aws = aws
 	test.eksClient = e2e.NewEKSClient(aws, suite.TestConfig.Endpoint)
 	test.ec2Client = ec2v2.NewFromConfig(aws)
-	test.ssmClient = ssmv2.NewFromConfig(aws)
+	test.SSMClient = ssmv2.NewFromConfig(aws)
 	test.s3Client = s3v2.NewFromConfig(aws)
 	test.cfnClient = cloudformation.NewFromConfig(aws)
 	test.iamClient = iam.NewFromConfig(aws)
-	test.remoteCommandRunner = ssm.NewSSHOnSSMCommandRunner(test.ssmClient, suite.JumpboxInstanceId, test.logger)
+	test.RemoteCommandRunner = ssm.NewSSHOnSSMCommandRunner(test.SSMClient, suite.JumpboxInstanceId, test.Logger)
 
 	ca, err := credentials.ParseCertificate(suite.RolesAnywhereCACertPEM, suite.RolesAnywhereCAKeyPEM)
 	if err != nil {
 		return nil, err
 	}
-	test.rolesAnywhereCA = ca
+	test.RolesAnywhereCA = ca
 
 	clientConfig, err := clientcmd.BuildConfigFromFlags("", cluster.KubeconfigPath(suite.TestConfig.ClusterName))
 	if err != nil {
 		return nil, err
 	}
-	test.k8sClientConfig = clientConfig
+	test.K8sClientConfig = clientConfig
 	test.k8sClient, err = clientgo.NewForConfig(clientConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	test.cluster, err = peered.GetHybridCluster(ctx, test.eksClient, test.ec2Client, suite.TestConfig.ClusterName)
+	test.Cluster, err = peered.GetHybridCluster(ctx, test.eksClient, test.ec2Client, suite.TestConfig.ClusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +140,7 @@ func buildPeeredVPCTestForSuite(ctx context.Context, suite *suiteConfiguration) 
 	}
 	test.nodeadmURLs = *urls
 
-	test.podIdentityS3Bucket, err = addon.PodIdentityBucket(ctx, test.s3Client, test.cluster.Name)
+	test.podIdentityS3Bucket, err = addon.PodIdentityBucket(ctx, test.s3Client, test.Cluster.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -148,97 +153,98 @@ func buildPeeredVPCTestForSuite(ctx context.Context, suite *suiteConfiguration) 
 	return test, nil
 }
 
-func (t *peeredVPCTest) newPeeredNode() *peered.Node {
+func (t *PeeredVPCTest) NewPeeredNode() *peered.Node {
 	return &peered.Node{
 		NodeCreate: peered.NodeCreate{
 			AWS:             t.aws,
 			EC2:             t.ec2Client,
-			SSM:             t.ssmClient,
-			Logger:          t.logger,
-			Cluster:         t.cluster,
+			SSM:             t.SSMClient,
+			Logger:          t.Logger,
+			Cluster:         t.Cluster,
 			NodeadmURLs:     t.nodeadmURLs,
 			PublicKey:       t.publicKey,
 			SetRootPassword: t.setRootPassword,
 		},
 		NodeCleanup: peered.NodeCleanup{
-			RemoteCommandRunner: t.remoteCommandRunner,
+			RemoteCommandRunner: t.RemoteCommandRunner,
 			EC2:                 t.ec2Client,
-			SSM:                 t.ssmClient,
+			SSM:                 t.SSMClient,
 			S3:                  t.s3Client,
 			K8s:                 t.k8sClient,
-			Logger:              t.logger,
-			SkipDelete:          t.skipCleanup,
-			ClusterName:         t.cluster.Name,
+			Logger:              t.Logger,
+			SkipDelete:          t.SkipCleanup,
+			ClusterName:         t.Cluster.Name,
 			LogsBucket:          t.logsBucket,
 		},
 	}
 }
 
-func (t *peeredVPCTest) newCleanNode(provider e2e.NodeadmCredentialsProvider, nodeName, nodeIP string) *nodeadm.CleanNode {
+func (t *PeeredVPCTest) NewCleanNode(provider e2e.NodeadmCredentialsProvider, nodeName, nodeIP string) *nodeadm.CleanNode {
 	return &nodeadm.CleanNode{
 		K8s:                 t.k8sClient,
-		RemoteCommandRunner: t.remoteCommandRunner,
+		RemoteCommandRunner: t.RemoteCommandRunner,
 		Verifier:            provider,
-		Logger:              t.logger,
+		Logger:              t.Logger,
 		NodeName:            nodeName,
 		NodeIP:              nodeIP,
 	}
 }
 
-func (t *peeredVPCTest) newUpgradeNode(nodeName, nodeIP string) *nodeadm.UpgradeNode {
+func (t *PeeredVPCTest) NewUpgradeNode(nodeName, nodeIP string) *nodeadm.UpgradeNode {
 	return &nodeadm.UpgradeNode{
 		K8s:                 t.k8sClient,
-		RemoteCommandRunner: t.remoteCommandRunner,
-		Logger:              t.logger,
+		RemoteCommandRunner: t.RemoteCommandRunner,
+		Logger:              t.Logger,
 		NodeName:            nodeName,
 		NodeIP:              nodeIP,
-		TargetK8sVersion:    t.cluster.KubernetesVersion,
+		TargetK8sVersion:    t.Cluster.KubernetesVersion,
 	}
 }
 
-func (t *peeredVPCTest) instanceName(testName string, os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) string {
+func (t *PeeredVPCTest) InstanceName(testName string, os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) string {
 	return fmt.Sprintf("EKSHybridCI-%s-%s-%s-%s",
 		testName,
-		e2e.SanitizeForAWSName(t.cluster.Name),
+		e2e.SanitizeForAWSName(t.Cluster.Name),
 		e2e.SanitizeForAWSName(os.Name()),
 		e2e.SanitizeForAWSName(string(provider.Name())),
 	)
 }
 
-func (t *peeredVPCTest) newVerifyPodIdentityAddon(nodeName string) *addon.VerifyPodIdentityAddon {
+func (t *PeeredVPCTest) NewVerifyPodIdentityAddon(nodeName string) *addon.VerifyPodIdentityAddon {
 	return &addon.VerifyPodIdentityAddon{
-		Cluster:             t.cluster.Name,
+		Cluster:             t.Cluster.Name,
 		NodeName:            nodeName,
 		PodIdentityS3Bucket: t.podIdentityS3Bucket,
 		K8S:                 t.k8sClient,
 		EKSClient:           t.eksClient,
 		IAMClient:           t.iamClient,
 		S3Client:            t.s3Client,
-		Logger:              t.logger,
-		K8SConfig:           t.k8sClientConfig,
-		Region:              t.cluster.Region,
+		Logger:              t.Logger,
+		K8SConfig:           t.K8sClientConfig,
+		Region:              t.Cluster.Region,
 	}
 }
 
-func (t *peeredVPCTest) newTestNode(ctx context.Context, instanceName, nodeName, k8sVersion string, os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider) *testNode {
+func (t *PeeredVPCTest) NewTestNode(ctx context.Context, instanceName, nodeName, k8sVersion string, os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider, instanceSize e2e.InstanceSize) *testNode {
 	return &testNode{
-		ArtifactsPath:   t.artifactsPath,
-		ClusterName:     t.cluster.Name,
+		ArtifactsPath:   t.ArtifactsPath,
+		ClusterName:     t.Cluster.Name,
 		EC2Client:       t.ec2Client,
 		EKSEndpoint:     t.eksEndpoint,
 		FailHandler:     t.handleFailure,
 		InstanceName:    instanceName,
-		Logger:          t.logger,
+		InstanceSize:    instanceSize,
+		Logger:          t.Logger,
 		LoggerControl:   t.loggerControl,
 		LogsBucket:      t.logsBucket,
-		PeeredNode:      t.newPeeredNode(),
+		PeeredNode:      t.NewPeeredNode(),
 		NodeName:        nodeName,
 		K8sClient:       t.k8sClient,
-		K8sClientConfig: t.k8sClientConfig,
+		K8sClientConfig: t.K8sClientConfig,
 		K8sVersion:      k8sVersion,
 		OS:              os,
 		Provider:        provider,
-		Region:          t.cluster.Region,
+		Region:          t.Cluster.Region,
 	}
 }
 
@@ -246,7 +252,7 @@ func (t *peeredVPCTest) newTestNode(ctx context.Context, instanceName, nodeName,
 // immediately after it happens. It doesn't modify gomega's or ginkgo's regular
 // behavior.
 // We do this to help debug errors when going through the test logs.
-func (t *peeredVPCTest) handleFailure(message string, callerSkip ...int) {
+func (t *PeeredVPCTest) handleFailure(message string, callerSkip ...int) {
 	skip := 0
 	if len(callerSkip) > 0 {
 		skip = callerSkip[0]
@@ -257,17 +263,139 @@ func (t *peeredVPCTest) handleFailure(message string, callerSkip ...int) {
 			Message:      message,
 			CodeLocation: cl,
 		}
-		t.logger.Error(nil, err.Error())
+		t.Logger.Error(nil, err.Error())
 		t.failureMessageLogged = true
 	}
 	Fail(message, skip+1)
 }
 
-func newLoggerForTests() e2e.PausableLogger {
+func NewLoggerForTests() e2e.PausableLogger {
 	_, reporter := GinkgoConfiguration()
 	cfg := e2e.LoggerConfig{}
 	if reporter.NoColor {
 		cfg.NoColor = true
 	}
 	return e2e.NewPausableLogger(cfg)
+}
+
+// BeforeSuiteCredentialSetup is a helper function that creates the credential stack
+// and returns a byte[] json representation of the SuiteConfiguration struct.
+// This is intended to be used in SynchronizedBeforeSuite and run for each process.
+func BeforeSuiteCredentialSetup(ctx context.Context, filePath string) SuiteConfiguration {
+	Expect(filePath).NotTo(BeEmpty(), "filepath should be configured") // Fail the test if the filepath flag is not provided
+	config, err := e2e.ReadConfig(filePath)
+	Expect(err).NotTo(HaveOccurred(), "should read valid test configuration")
+
+	logger := NewLoggerForTests().Logger
+	aws, err := e2e.NewAWSConfig(ctx, awsconfig.WithRegion(config.ClusterRegion))
+	Expect(err).NotTo(HaveOccurred())
+
+	infra, err := peered.Setup(ctx, logger, aws, config.ClusterName, config.Endpoint)
+	Expect(err).NotTo(HaveOccurred(), "should setup e2e resources for peered test")
+
+	skipCleanup := os.Getenv("SKIP_CLEANUP") == "true"
+
+	// DeferCleanup is context aware, so it will behave as SynchronizedAfterSuite
+	// We prefer this because it's simpler and it avoids having to share global state
+	DeferCleanup(func(ctx context.Context) {
+		if skipCleanup {
+			logger.Info("Skipping cleanup of e2e resources stack")
+			return
+		}
+		Expect(infra.Teardown(ctx)).To(Succeed(), "should teardown e2e resources")
+	}, NodeTimeout(constants.DeferCleanupTimeout))
+
+	return SuiteConfiguration{
+		TestConfig:             config,
+		SkipCleanup:            skipCleanup,
+		CredentialsStackOutput: &infra.Credentials.StackOutput,
+		RolesAnywhereCACertPEM: infra.Credentials.RolesAnywhereCA.CertPEM,
+		RolesAnywhereCAKeyPEM:  infra.Credentials.RolesAnywhereCA.KeyPEM,
+		PublicKey:              infra.NodesPublicSSHKey,
+		JumpboxInstanceId:      infra.JumpboxInstanceId,
+	}
+}
+
+func BeforeSuiteCredentialUnmarshal(ctx context.Context, data []byte) *SuiteConfiguration {
+	Expect(data).NotTo(BeEmpty(), "suite config should have provided by first process")
+	suiteConfig := &SuiteConfiguration{}
+	Expect(yaml.Unmarshal(data, suiteConfig)).To(Succeed(), "should unmarshal suite config coming from first test process successfully")
+	Expect(suiteConfig.TestConfig).NotTo(BeNil(), "test configuration should have been set")
+	Expect(suiteConfig.CredentialsStackOutput).NotTo(BeNil(), "ec2 stack output should have been set")
+	return suiteConfig
+}
+
+// BeforeVPCTest is a helper function that builds a PeeredVPCTest and sets up
+// the credential providers. It is intended to be used in BeforeEach.
+func BeforeVPCTest(ctx context.Context, suite *SuiteConfiguration) *PeeredVPCTest {
+	Expect(suite).NotTo(BeNil(), "suite configuration should have been set")
+	Expect(suite.TestConfig).NotTo(BeNil(), "test configuration should have been set")
+	Expect(suite.CredentialsStackOutput).NotTo(BeNil(), "credentials stack output should have been set")
+
+	var err error
+	test, err := BuildPeeredVPCTestForSuite(ctx, suite)
+	Expect(err).NotTo(HaveOccurred(), "should build peered VPC test config")
+
+	return test
+}
+
+func OSList() []e2e.NodeadmOS {
+	return []e2e.NodeadmOS{
+		osystem.NewUbuntu2004AMD(),
+		osystem.NewUbuntu2004ARM(),
+		osystem.NewUbuntu2004DockerSource(),
+		osystem.NewUbuntu2204AMD(),
+		osystem.NewUbuntu2204ARM(),
+		osystem.NewUbuntu2204DockerSource(),
+		osystem.NewUbuntu2404AMD(),
+		osystem.NewUbuntu2404ARM(),
+		osystem.NewUbuntu2404DockerSource(),
+		osystem.NewAmazonLinux2023AMD(),
+		osystem.NewAmazonLinux2023ARM(),
+		osystem.NewRedHat8AMD(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
+		osystem.NewRedHat8ARM(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
+		osystem.NewRedHat9AMD(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
+		osystem.NewRedHat9ARM(os.Getenv("RHEL_USERNAME"), os.Getenv("RHEL_PASSWORD")),
+	}
+}
+
+func AddClientsToCredentialProviders(credentialProviders []e2e.NodeadmCredentialsProvider, test *PeeredVPCTest) []e2e.NodeadmCredentialsProvider {
+	result := []e2e.NodeadmCredentialsProvider{}
+	for _, provider := range credentialProviders {
+		switch p := provider.(type) {
+		case *credentials.SsmProvider:
+			p.SSM = test.SSMClient
+			p.Role = test.StackOut.SSMNodeRoleName
+		case *credentials.IamRolesAnywhereProvider:
+			p.RoleARN = test.StackOut.IRANodeRoleARN
+			p.ProfileARN = test.StackOut.IRAProfileARN
+			p.TrustAnchorARN = test.StackOut.IRATrustAnchorARN
+			p.CA = test.RolesAnywhereCA
+		}
+		result = append(result, provider)
+	}
+	return result
+}
+
+type NodeCreate struct {
+	InstanceName string
+	InstanceSize e2e.InstanceSize
+	NodeName     string
+	OS           e2e.NodeadmOS
+	Provider     e2e.NodeadmCredentialsProvider
+}
+
+func CreateNodes(ctx context.Context, test *PeeredVPCTest, nodesToCreate []NodeCreate) {
+	var wg sync.WaitGroup
+	for _, entry := range nodesToCreate {
+		wg.Add(1)
+		go func(entry NodeCreate) {
+			defer wg.Done()
+			defer GinkgoRecover()
+			testNode := test.NewTestNode(ctx, entry.InstanceName, entry.NodeName, test.Cluster.KubernetesVersion, entry.OS, entry.Provider, entry.InstanceSize)
+			Expect(testNode.Start(ctx)).To(Succeed(), "node should start successfully")
+			Expect(testNode.Verify(ctx)).To(Succeed(), "node should be fully functional")
+		}(entry)
+	}
+	wg.Wait()
 }

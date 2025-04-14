@@ -83,8 +83,8 @@ func (u Ubuntu2004) Name() string {
 	return name
 }
 
-func (u Ubuntu2004) InstanceType(region string) string {
-	return getInstanceTypeFromRegionAndArch(region, u.architecture)
+func (u Ubuntu2004) InstanceType(region string, instanceSize e2e.InstanceSize) string {
+	return getInstanceTypeFromRegionAndArch(region, u.architecture, instanceSize)
 }
 
 func (u Ubuntu2004) AMIName(ctx context.Context, awsConfig aws.Config) (string, error) {
@@ -151,8 +151,8 @@ func (u Ubuntu2204) Name() string {
 	return name
 }
 
-func (u Ubuntu2204) InstanceType(region string) string {
-	return getInstanceTypeFromRegionAndArch(region, u.architecture)
+func (u Ubuntu2204) InstanceType(region string, instanceSize e2e.InstanceSize) string {
+	return getInstanceTypeFromRegionAndArch(region, u.architecture, instanceSize)
 }
 
 func (u Ubuntu2204) AMIName(ctx context.Context, awsConfig aws.Config) (string, error) {
@@ -219,8 +219,8 @@ func (u Ubuntu2404) Name() string {
 	return name
 }
 
-func (u Ubuntu2404) InstanceType(region string) string {
-	return getInstanceTypeFromRegionAndArch(region, u.architecture)
+func (u Ubuntu2404) InstanceType(region string, instanceSize e2e.InstanceSize) string {
+	return getInstanceTypeFromRegionAndArch(region, u.architecture, instanceSize)
 }
 
 func (u Ubuntu2404) AMIName(ctx context.Context, awsConfig aws.Config) (string, error) {

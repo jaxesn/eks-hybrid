@@ -3,13 +3,6 @@ version: 0.2
 phases:
   build:
     commands:
-    - aws s3 cp _bin/amd64/nodeadm s3://$ARTIFACTS_BUCKET/latest/linux/amd64/nodeadm --acl public-read
-    - aws s3 cp _bin/arm64/nodeadm s3://$ARTIFACTS_BUCKET/latest/linux/arm64/nodeadm --acl public-read
+    - aws s3 sync --no-progress _bin/amd64/ s3://$ARTIFACTS_BUCKET/latest/linux/amd64/ --acl public-read
+    - aws s3 sync --no-progress _bin/arm64/ s3://$ARTIFACTS_BUCKET/latest/linux/arm64/ --acl public-read
     - aws s3 cp _bin/GIT_VERSION s3://$ARTIFACTS_BUCKET/latest/GIT_VERSION --acl public-read
-    - aws s3 cp _bin/amd64/e2e-test s3://$ARTIFACTS_BUCKET/latest/linux/amd64/e2e-test --acl public-read
-    - aws s3 cp _bin/arm64/e2e-test s3://$ARTIFACTS_BUCKET/latest/linux/arm64/e2e-test --acl public-read
-    - aws s3 cp _bin/amd64/e2e.test s3://$ARTIFACTS_BUCKET/latest/linux/amd64/e2e.test --acl public-read
-    - aws s3 cp _bin/arm64/e2e.test s3://$ARTIFACTS_BUCKET/latest/linux/arm64/e2e.test --acl public-read
-    - aws s3 cp _bin/amd64/ginkgo s3://$ARTIFACTS_BUCKET/latest/linux/amd64/ginkgo --acl public-read
-    - aws s3 cp _bin/arm64/ginkgo s3://$ARTIFACTS_BUCKET/latest/linux/arm64/ginkgo --acl public-read
-    - aws s3 sync hack s3://$ARTIFACTS_BUCKET/latest --acl public-read

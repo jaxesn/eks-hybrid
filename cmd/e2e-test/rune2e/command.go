@@ -29,7 +29,7 @@ const (
 	defaultCNI               = "cilium"
 	defaultTimeout           = time.Minute * 60
 	defaultTestProcs         = 1
-	defaultTestsBinaryOrPath = "./test/e2e/suite"
+	defaultTestsBinaryOrPath = "./test/e2e/suite/nodeadm"
 )
 
 type command struct {
