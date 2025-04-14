@@ -66,8 +66,8 @@ func (r RedHat8) Name() string {
 	return "rhel8-" + r.architecture.String()
 }
 
-func (r RedHat8) InstanceType(region string) string {
-	return getInstanceTypeFromRegionAndArch(region, r.architecture)
+func (r RedHat8) InstanceType(region string, instanceSize e2e.InstanceSize) string {
+	return getInstanceTypeFromRegionAndArch(region, r.architecture, instanceSize)
 }
 
 func (r RedHat8) AMIName(ctx context.Context, awsConfig aws.Config) (string, error) {
@@ -124,8 +124,8 @@ func (r RedHat9) Name() string {
 	return "rhel9-" + r.architecture.String()
 }
 
-func (r RedHat9) InstanceType(region string) string {
-	return getInstanceTypeFromRegionAndArch(region, r.architecture)
+func (r RedHat9) InstanceType(region string, instanceSize e2e.InstanceSize) string {
+	return getInstanceTypeFromRegionAndArch(region, r.architecture, instanceSize)
 }
 
 func (r RedHat9) AMIName(ctx context.Context, awsConfig aws.Config) (string, error) {

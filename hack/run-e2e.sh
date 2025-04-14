@@ -62,7 +62,7 @@ skip=$(yq '.skipped_tests | join("|")' ${SKIP_FILE})
 build::common::echo_and_run $BIN_DIR/e2e-test run-e2e \
   --setup-config=$RESOURCES_YAML \
   --test-filter="(simpleflow) || (upgradeflow && (ubuntu2204-amd64 || rhel8-amd64 || al23-amd64))" \
-  --tests-binary=$BIN_DIR/e2e.test \
+  --tests-binary=$BIN_DIR/nodeadm.test \
   --skipped-tests="$skip" \
   --nodeadm-amd-url=$NODEADM_AMD_URL \
   --nodeadm-arm-url=$NODEADM_ARM_URL \

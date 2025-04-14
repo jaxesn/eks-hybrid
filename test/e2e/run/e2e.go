@@ -79,7 +79,7 @@ type E2EPaths struct {
 	// prefix (path) for logs/artifacts on S3, instance name will be appended to this path
 	// ex: logs/<cluster-name>
 	LogsBucketPath string
-	// either e2e.test or ./test/e2e/suite
+	// either nodeadm.test or ./test/e2e/suite/nodeadm
 	TestsBinaryOrSource string
 	// path to test config file e2e.TestConfig
 	TestConfigFile string

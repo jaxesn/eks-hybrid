@@ -13,6 +13,8 @@ GIT_VERSION?=0.0.0
 MANIFEST_HOST?=hybrid-assets.eks.amazonaws.com
 HYBRID_MANIFEST_URL=https://$(MANIFEST_HOST)/manifest.yaml
 
+E2E_SUITES?=./test/e2e/suite/nodeadm ./test/e2e/suite/conformance
+
 .PHONY: all
 all: crds generate fmt vet build
 
@@ -103,12 +105,12 @@ run: build ## Run nodeadm binary.
 
 .PHONY: e2e-tests-binary
 e2e-tests-binary: ## Build binary with e2e tests.
-	CGO_ENABLED=0 $(GO) test -ldflags "-s -w -buildid='' -extldflags -static" -c ./test/e2e/suite -o ./_bin/e2e.test -tags "e2e"
+	CGO_ENABLED=0 $(GO) test -ldflags "-s -w -buildid='' -extldflags -static" -c $(E2E_SUITES)  -o ./_bin/ -tags "e2e"
 
 .PHONY: build-cross-e2e-tests-binary
 build-cross-e2e-tests-binary:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -ldflags "-s -w -buildid='' -extldflags -static" -c ./test/e2e/suite -o ./_bin/amd64/e2e.test -tags "e2e"
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) test -ldflags "-s -w -buildid='' -extldflags -static" -c ./test/e2e/suite -o ./_bin/arm64/e2e.test -tags "e2e"
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -ldflags "-s -w -buildid='' -extldflags -static" -c $(E2E_SUITES) -o ./_bin/amd64/ -tags "e2e"
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) test -ldflags "-s -w -buildid='' -extldflags -static" -c $(E2E_SUITES) -o ./_bin/arm64/ -tags "e2e"
 
 .PHONY: e2e-test
 e2e-test: ## Build e2e test setup binary.

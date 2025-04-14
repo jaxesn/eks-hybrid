@@ -15,9 +15,16 @@ import (
 type NodeadmOS interface {
 	Name() string
 	AMIName(ctx context.Context, awsConfig aws.Config) (string, error)
-	BuildUserData(UserDataInput UserDataInput) ([]byte, error)
-	InstanceType(region string) string
+	BuildUserData(userDataInput UserDataInput) ([]byte, error)
+	InstanceType(region string, instanceSize InstanceSize) string
 }
+
+type InstanceSize int
+
+const (
+	Large InstanceSize = iota
+	XLarge
+)
 
 type UserDataInput struct {
 	CredsProviderName string

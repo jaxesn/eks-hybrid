@@ -12,6 +12,7 @@ const (
 	TestArchitectureStackNamePrefix = "EKSHybridCI-Arch"
 	TestInstanceName                = "TestInstanceName"
 	TestArtifactsPath               = "TestArtifactsPath"
+	TestConformancePath             = "TestConformancePath"
 	TestLogBundleFile               = "TestLogBundleFile"
 	TestSerialOutputLogFile         = "TestSerialOutputLogFile"
 	TestS3LogsFolder                = "logs"

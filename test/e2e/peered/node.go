@@ -45,6 +45,7 @@ type Node struct {
 type NodeSpec struct {
 	EKSEndpoint        string
 	InstanceName       string
+	InstanceSize       e2e.InstanceSize
 	InstanceProfileARN string
 	NodeK8sVersion     string
 	NodeName           string
@@ -133,11 +134,12 @@ func (c NodeCreate) Create(ctx context.Context, spec *NodeSpec) (PeerdNode, erro
 		return PeerdNode{}, fmt.Errorf("expected to successfully retrieve ami id: %w", err)
 	}
 
+	instanceSize := spec.InstanceSize
 	ec2Input := ec2.InstanceConfig{
 		ClusterName:        c.Cluster.Name,
 		InstanceName:       spec.InstanceName,
 		AmiID:              amiId,
-		InstanceType:       spec.OS.InstanceType(c.Cluster.Region),
+		InstanceType:       spec.OS.InstanceType(c.Cluster.Region, instanceSize),
 		VolumeSize:         ec2VolumeSize,
 		SubnetID:           c.Cluster.SubnetID,
 		SecurityGroupID:    c.Cluster.SecurityGroupID,

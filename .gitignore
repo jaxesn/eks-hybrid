@@ -9,7 +9,7 @@ coverage.out
 vendor
 e2e-artifacts
 e2e-config
-test/e2e/suite/ca.crt
-test/e2e/suite/ca.key
-test/e2e/e2e.test
+**/ca.crt
+**/ca.key
+test/e2e/suite/**/*.test
 _output

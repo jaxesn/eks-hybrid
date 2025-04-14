@@ -25,16 +25,23 @@ const (
 	arm64 architecture = "arm64"
 )
 
+var instanceSizeToType = map[architecture]map[e2e.InstanceSize]string{
+	amd64: {
+		e2e.XLarge: "t3.xlarge",
+		e2e.Large:  "t3.large",
+	},
+	arm64: {
+		e2e.XLarge: "t4g.xlarge",
+		e2e.Large:  "t4g.large",
+	},
+}
+
 func (a architecture) String() string {
 	return string(a)
 }
 
 func (a architecture) arm() bool {
 	return a == arm64
-}
-
-func (a architecture) amd() bool {
-	return a == amd64
 }
 
 func populateBaseScripts(userDataInput *e2e.UserDataInput) error {
@@ -85,9 +92,11 @@ func getAmiIDFromSSM(ctx context.Context, client *ssm.Client, amiName string) (*
 	return output.Parameter.Value, nil
 }
 
-func getInstanceTypeFromRegionAndArch(_ string, arch architecture) string {
-	if arch.amd() {
-		return "t3.large"
+// an unknown size and arch combination is a coding error, so we panic
+func getInstanceTypeFromRegionAndArch(_ string, arch architecture, instanceSize e2e.InstanceSize) string {
+	instanceType, ok := instanceSizeToType[arch][instanceSize]
+	if !ok {
+		panic(fmt.Errorf("unknown instance size %d for architecture %s", instanceSize, arch))
 	}
-	return "t4g.large"
+	return instanceType
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/go-logr/logr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	clientgo "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -26,15 +27,16 @@ type testNode struct {
 	EKSEndpoint     string
 	FailHandler     func(message string, callerSkip ...int)
 	InstanceName    string
+	InstanceSize    e2e.InstanceSize
 	K8sClient       clientgo.Interface
 	K8sClientConfig *rest.Config
 	K8sVersion      string
 	LogsBucket      string
 	LoggerControl   e2e.PausableLogger
 	Logger          logr.Logger
-	PeeredNode      *peered.Node
 	NodeName        string
 	OS              e2e.NodeadmOS
+	PeeredNode      *peered.Node
 	Provider        e2e.NodeadmCredentialsProvider
 	Region          string
 
@@ -57,6 +59,7 @@ func (n *testNode) Start(ctx context.Context) error {
 		node, err := n.PeeredNode.Create(ctx, &peered.NodeSpec{
 			EKSEndpoint:    n.EKSEndpoint,
 			InstanceName:   n.InstanceName,
+			InstanceSize:   n.InstanceSize,
 			NodeK8sVersion: n.K8sVersion,
 			NodeName:       n.NodeName,
 			OS:             n.OS,
@@ -72,7 +75,7 @@ func (n *testNode) Start(ctx context.Context) error {
 
 		n.node = &node
 
-		n.verifyNode = n.newVerifyNode(node.Name, node.Instance.IP)
+		n.verifyNode = n.NewVerifyNode(node.Name, node.Instance.IP)
 		outputFile := filepath.Join(n.ArtifactsPath, n.InstanceName+"-"+constants.SerialOutputLogFile)
 		AddReportEntry(constants.TestSerialOutputLogFile, outputFile)
 		n.serialOutput = peered.NewSerialOutputBlockBestEffort(ctx, &peered.SerialOutputConfig{
@@ -124,7 +127,7 @@ func (n *testNode) waitForNodeToJoin(ctx context.Context, flakeRun FlakeRun) {
 	}
 }
 
-func (n *testNode) newVerifyNode(nodeName, nodeIP string) *kubernetes.VerifyNode {
+func (n *testNode) NewVerifyNode(nodeName, nodeIP string) *kubernetes.VerifyNode {
 	return &kubernetes.VerifyNode{
 		ClientConfig: n.K8sClientConfig,
 		K8s:          n.K8sClient,
@@ -137,6 +140,10 @@ func (n *testNode) newVerifyNode(nodeName, nodeIP string) *kubernetes.VerifyNode
 
 func (n *testNode) Verify(ctx context.Context) error {
 	return n.verifyNode.Run(ctx)
+}
+
+func (n *testNode) WaitForNodeReady(ctx context.Context) (*corev1.Node, error) {
+	return n.verifyNode.WaitForNodeReady(ctx)
 }
 
 func (n *testNode) It(name string, f func()) {

@@ -35,7 +35,7 @@ The `run-e2e` subcommand provides a streamlined way to run E2E tests with config
 
 4. After running `run-e2e` to create your test infrastructure, you could use the following when rerunning:
    ```bash
-    ./_bin/ginkgo  -v -tags=e2e --label-filter='al23-amd64 && simpleflow && ssm'  ./test/e2e/suite -- -filepath=e2e-artifacts/configs/e2e-param.yaml
+    ./_bin/ginkgo  -v -tags=e2e --label-filter='al23-amd64 && simpleflow && ssm'  ./test/e2e/suite/nodeadm -- -filepath=e2e-artifacts/configs/e2e-param.yaml
    ```
 
 ### Key Options
@@ -70,7 +70,7 @@ You can run the tests manually using the CLI commands:
 
 3. **Run a single test**:
    ```bash
-    ./_bin/ginkgo  -v -tags=e2e --label-filter='al23-amd64 && simpleflow && ssm'  ./test/e2e/suite -- -filepath=path/to/e2e-param.yaml
+    ./_bin/ginkgo  -v -tags=e2e --label-filter='al23-amd64 && simpleflow && ssm'  ./test/e2e/suite/nodeadm -- -filepath=path/to/e2e-param.yaml
    ```
 
 4. **Clean up the infrastructure**:
