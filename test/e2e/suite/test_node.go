@@ -17,6 +17,7 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/credentials"
 	"github.com/aws/eks-hybrid/test/e2e/ec2"
 	"github.com/aws/eks-hybrid/test/e2e/kubernetes"
+	"github.com/aws/eks-hybrid/test/e2e/nodeadm"
 	"github.com/aws/eks-hybrid/test/e2e/peered"
 )
 
@@ -115,6 +116,9 @@ func (n *testNode) waitForNodeToJoin(ctx context.Context, flakeRun FlakeRun) {
 	n.Logger.Info("Waiting for EC2 Instance to be Running...")
 	flakeRun.RetryableExpect(ec2.WaitForEC2InstanceRunning(ctx, n.EC2Client, n.node.Instance.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
 	_, err := n.verifyNode.WaitForNodeReady(ctx)
+	// run nodeadm debug regardless of whether the node joined the cluster successfully
+	// on join success, well expect debug to succeed, otherwise we ignore the debug error
+	debugErr := nodeadm.RunNodeadmDebug(ctx, n.PeeredNode.RemoteCommandRunner, n.node.Instance.IP)
 	if err != nil {
 		isImpaired, oErr := ec2.IsEC2InstanceImpaired(ctx, n.EC2Client, n.node.Instance.ID)
 		Expect(oErr).NotTo(HaveOccurred(), "should describe instance status")
@@ -125,6 +129,8 @@ func (n *testNode) waitForNodeToJoin(ctx context.Context, flakeRun FlakeRun) {
 		}
 		expect(err).To(Succeed(), "node should have joined the cluster successfully")
 	}
+
+	Expect(debugErr).NotTo(HaveOccurred(), "nodeadm debug should have been run successfully")
 }
 
 func (n *testNode) NewVerifyNode(nodeName, nodeIP string) *kubernetes.VerifyNode {

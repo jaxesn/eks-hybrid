@@ -74,3 +74,20 @@ func RunLogCollector(ctx context.Context, runner commands.RemoteCommandRunner, i
 
 	return nil
 }
+
+func RunNodeadmDebug(ctx context.Context, runner commands.RemoteCommandRunner, instanceIP string) error {
+	commands := []string{
+		"/tmp/nodeadm debug -c file:///nodeadm-config.yaml",
+	}
+
+	output, err := runner.Run(ctx, instanceIP, commands)
+	if err != nil {
+		return fmt.Errorf("running remote command: %w", err)
+	}
+
+	if output.Status != "Success" {
+		return fmt.Errorf("nodeadm debug remote command did not succeed")
+	}
+
+	return nil
+}
