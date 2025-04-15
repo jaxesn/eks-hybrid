@@ -24,6 +24,7 @@ type FlakyCode struct {
 	FailHandler func(message string, callerSkip ...int)
 }
 type FlakeRun struct {
+	Attempt         int
 	DeferCleanup    func(func(context.Context), ...interface{})
 	RetryableExpect func(actual interface{}, extra ...interface{}) Assertion
 }
@@ -75,8 +76,10 @@ func (r *retryable) recover() {
 
 	err, ok := e.(types.GinkgoError)
 	if !ok {
-		r.panicableError = fmt.Errorf("unknown panic: %v", e)
-		return
+		// retryable and non-retryable errors are stored as GinkgoError
+		// if we get here, we have an unknown error/panic we re-panic
+		// and let GinkgoRecover handle it to get accurate stacktrace and error message
+		panic(fmt.Errorf("unknown panic: %v", e))
 	}
 
 	// if not retrying, store the error and return to fail the test
@@ -111,6 +114,7 @@ func (f *FlakyCode) It(ctx context.Context, description string, flakeAttempts in
 		retry := newRetryable(attempt, flakeAttempts, f.FailHandler)
 
 		flakeRun := FlakeRun{
+			Attempt:         attempt,
 			DeferCleanup:    deferCleanup,
 			RetryableExpect: retry.expect,
 		}
@@ -119,6 +123,8 @@ func (f *FlakyCode) It(ctx context.Context, description string, flakeAttempts in
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// give GinkgoRecover a chance to catch a possible panic from our retry.recover()
+			defer GinkgoRecover()
 			defer retry.recover()
 
 			By(fmt.Sprintf("%s (attempt %d/%d)", description, attempt+1, flakeAttempts))

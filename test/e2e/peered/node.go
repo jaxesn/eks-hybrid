@@ -234,6 +234,7 @@ type NodeCleanup struct {
 	LogsBucket  string
 	ClusterName string
 	SkipDelete  bool
+	TestName    string
 }
 
 func (c *NodeCleanup) CleanupSSMActivation(ctx context.Context, nodeName, clusterName string) error {
@@ -298,11 +299,11 @@ func (c *NodeCleanup) Cleanup(ctx context.Context, node PeerdNode) error {
 }
 
 func (c Node) S3LogsURL(instanceName string) string {
-	return fmt.Sprintf("https://%s.console.aws.amazon.com/s3/buckets/%s?prefix=%s/", c.Cluster.Region, c.LogsBucket, c.logsPrefix(instanceName))
+	return S3LogsURL(c.Cluster.Region, c.LogsBucket, c.logsPrefix(instanceName))
 }
 
 func (c NodeCleanup) logsPrefix(instanceName string) string {
-	return fmt.Sprintf("%s/%s/%s", constants.TestS3LogsFolder, c.ClusterName, instanceName)
+	return fmt.Sprintf("%s/%s/%s/%s", constants.TestS3LogsFolder, c.ClusterName, c.TestName, instanceName)
 }
 
 func (c NodeCleanup) collectLogs(ctx context.Context, bundleName string, instance ec2.Instance) error {
@@ -319,4 +320,8 @@ func (c NodeCleanup) collectLogs(ctx context.Context, bundleName string, instanc
 		return err
 	}
 	return nil
+}
+
+func S3LogsURL(region, logsBucket, pathSuffix string) string {
+	return fmt.Sprintf("https://%s.console.aws.amazon.com/s3/buckets/%s?prefix=%s/", region, logsBucket, pathSuffix)
 }

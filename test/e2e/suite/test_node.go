@@ -2,6 +2,8 @@ package suite
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 
 	ec2v2 "github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -18,27 +20,30 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/ec2"
 	"github.com/aws/eks-hybrid/test/e2e/kubernetes"
 	"github.com/aws/eks-hybrid/test/e2e/peered"
+	"github.com/aws/eks-hybrid/test/e2e/run"
 )
 
 type testNode struct {
-	ArtifactsPath   string
-	ClusterName     string
-	EC2Client       *ec2v2.Client
-	EKSEndpoint     string
-	FailHandler     func(message string, callerSkip ...int)
-	InstanceName    string
-	InstanceSize    e2e.InstanceSize
-	K8sClient       clientgo.Interface
-	K8sClientConfig *rest.Config
-	K8sVersion      string
-	LogsBucket      string
-	LoggerControl   e2e.PausableLogger
-	Logger          logr.Logger
-	NodeName        string
-	OS              e2e.NodeadmOS
-	PeeredNode      *peered.Node
-	Provider        e2e.NodeadmCredentialsProvider
-	Region          string
+	AddInstanceReportEntry func(run.InstanceReportEntry)
+	ArtifactsPath          string
+	ClusterName            string
+	EC2Client              *ec2v2.Client
+	EKSEndpoint            string
+	FailHandler            func(message string, callerSkip ...int)
+	InstanceName           string
+	InstanceSize           e2e.InstanceSize
+	K8sClient              clientgo.Interface
+	K8sClientConfig        *rest.Config
+	K8sVersion             string
+	LogsBucket             string
+	LoggerControl          e2e.PausableLogger
+	Logger                 logr.Logger
+	NodeName               string
+	OS                     e2e.NodeadmOS
+	PeeredNode             *peered.Node
+	Provider               e2e.NodeadmCredentialsProvider
+	Region                 string
+	TestName               string
 
 	flakyCode    *FlakyCode
 	node         *peered.PeerdNode
@@ -53,12 +58,23 @@ func (n *testNode) Start(ctx context.Context) error {
 		Logger:      n.Logger,
 		FailHandler: n.FailHandler,
 	}
+	shouldFail := true
 	n.flakyCode.It(ctx, "Creates a node", 3, func(ctx context.Context, flakeRun FlakeRun) {
-		n.addReportEntries(n.PeeredNode)
+		instanceName := n.InstanceName
+		if flakeRun.Attempt > 0 {
+			instanceName = fmt.Sprintf("%s-%d", n.InstanceName, flakeRun.Attempt+1)
+		}
+		serialOutputFile := filepath.Join(n.ArtifactsPath, instanceName, constants.SerialOutputLogFile)
+		Expect(os.MkdirAll(filepath.Dir(serialOutputFile), 0o755)).To(Succeed(), "failed to create directory for serial output log file")
 
+		n.AddInstanceReportEntry(run.InstanceReportEntry{
+			InstanceName:        instanceName,
+			LogBundleFile:       n.PeeredNode.S3LogsURL(n.TestName) + instanceName + "/" + constants.LogCollectorBundleFileName,
+			SerialOutputLogFile: serialOutputFile,
+		})
 		node, err := n.PeeredNode.Create(ctx, &peered.NodeSpec{
 			EKSEndpoint:    n.EKSEndpoint,
-			InstanceName:   n.InstanceName,
+			InstanceName:   instanceName,
 			InstanceSize:   n.InstanceSize,
 			NodeK8sVersion: n.K8sVersion,
 			NodeName:       n.NodeName,
@@ -76,14 +92,12 @@ func (n *testNode) Start(ctx context.Context) error {
 		n.node = &node
 
 		n.verifyNode = n.NewVerifyNode(node.Name, node.Instance.IP)
-		outputFile := filepath.Join(n.ArtifactsPath, n.InstanceName+"-"+constants.SerialOutputLogFile)
-		AddReportEntry(constants.TestSerialOutputLogFile, outputFile)
 		n.serialOutput = peered.NewSerialOutputBlockBestEffort(ctx, &peered.SerialOutputConfig{
 			By:         By,
 			PeeredNode: n.PeeredNode,
 			Instance:   node.Instance,
 			TestLogger: n.LoggerControl,
-			OutputFile: outputFile,
+			OutputFile: serialOutputFile,
 		})
 
 		flakeRun.DeferCleanup(func(ctx context.Context) {
@@ -91,7 +105,9 @@ func (n *testNode) Start(ctx context.Context) error {
 		}, NodeTimeout(constants.DeferCleanupTimeout))
 
 		n.serialOutput.It("joins the cluster", func() {
-			n.waitForNodeToJoin(ctx, flakeRun)
+			fail := shouldFail
+			shouldFail = false
+			n.waitForNodeToJoin(ctx, flakeRun, fail)
 		})
 	})
 	return nil
@@ -103,18 +119,12 @@ func (n *testNode) checkExistingNode(ctx context.Context) {
 	Expect(existingNode).To(BeNil(), "existing node with e2e label should not have been found")
 }
 
-func (n *testNode) addReportEntries(peeredNode *peered.Node) {
-	AddReportEntry(constants.TestInstanceName, n.InstanceName)
-	if n.LogsBucket != "" {
-		AddReportEntry(constants.TestArtifactsPath, peeredNode.S3LogsURL(n.InstanceName))
-		AddReportEntry(constants.TestLogBundleFile, peeredNode.S3LogsURL(n.InstanceName)+constants.LogCollectorBundleFileName)
-	}
-}
-
-func (n *testNode) waitForNodeToJoin(ctx context.Context, flakeRun FlakeRun) {
+func (n *testNode) waitForNodeToJoin(ctx context.Context, flakeRun FlakeRun, fail bool) {
 	n.Logger.Info("Waiting for EC2 Instance to be Running...")
 	flakeRun.RetryableExpect(ec2.WaitForEC2InstanceRunning(ctx, n.EC2Client, n.node.Instance.ID)).To(Succeed(), "EC2 Instance should have been reached Running status")
 	_, err := n.verifyNode.WaitForNodeReady(ctx)
+	flakeRun.RetryableExpect(fail).To(BeFalse(), "node should have failed")
+
 	if err != nil {
 		isImpaired, oErr := ec2.IsEC2InstanceImpaired(ctx, n.EC2Client, n.node.Instance.ID)
 		Expect(oErr).NotTo(HaveOccurred(), "should describe instance status")

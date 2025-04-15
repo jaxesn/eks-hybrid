@@ -61,7 +61,6 @@ type E2EResult struct {
 type FailedTest struct {
 	CollectorLogsBundle string `json:"collectorLogsBundle"`
 	FailureMessage      string `json:"failureMessage"`
-	InstanceName        string `json:"instanceName"`
 	GinkgoLog           string `json:"ginkgoLog"`
 	Name                string `json:"name"`
 	SerialLog           string `json:"serialLog"`

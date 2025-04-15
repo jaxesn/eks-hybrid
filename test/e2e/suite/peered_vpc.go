@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -32,6 +34,7 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/nodeadm"
 	osystem "github.com/aws/eks-hybrid/test/e2e/os"
 	"github.com/aws/eks-hybrid/test/e2e/peered"
+	"github.com/aws/eks-hybrid/test/e2e/run"
 	"github.com/aws/eks-hybrid/test/e2e/s3"
 	"github.com/aws/eks-hybrid/test/e2e/ssm"
 )
@@ -82,21 +85,28 @@ type PeeredVPCTest struct {
 	// expectation has already been registered and logged . It avoids logging
 	// the same multiple times.
 	failureMessageLogged bool
+
+	Name        string
+	reportEntry run.TestReportEntry
 }
 
 func BuildPeeredVPCTestForSuite(ctx context.Context, suite *SuiteConfiguration) (*PeeredVPCTest, error) {
 	pausableLogger := NewLoggerForTests()
+
+	testName := strings.Join(CurrentSpecReport().LeafNodeLabels, "-")
+
 	test := &PeeredVPCTest{
 		eksEndpoint:            suite.TestConfig.Endpoint,
 		StackOut:               suite.CredentialsStackOutput,
 		Logger:                 pausableLogger.Logger,
 		loggerControl:          pausableLogger,
 		logsBucket:             suite.TestConfig.LogsBucket,
-		ArtifactsPath:          suite.TestConfig.ArtifactsFolder,
+		ArtifactsPath:          filepath.Join(suite.TestConfig.ArtifactsFolder, testName),
 		OverrideNodeK8sVersion: suite.TestConfig.NodeK8sVersion,
 		publicKey:              suite.PublicKey,
 		setRootPassword:        suite.TestConfig.SetRootPassword,
 		SkipCleanup:            suite.SkipCleanup,
+		Name:                   testName,
 	}
 
 	aws, err := e2e.NewAWSConfig(ctx, awsconfig.WithRegion(suite.TestConfig.ClusterRegion))
@@ -150,6 +160,15 @@ func BuildPeeredVPCTestForSuite(ctx context.Context, suite *SuiteConfiguration) 
 	// to ensure the error message is printed after the serial log (if it happens while waiting)
 	RegisterFailHandler(test.handleFailure)
 
+	test.reportEntry = run.TestReportEntry{
+		ArtifactsPath: peered.S3LogsURL(test.Cluster.Region, test.logsBucket, test.Name),
+		TestName:      test.Name,
+		Instances:     []run.InstanceReportEntry{},
+	}
+	DeferCleanup(func(ctx context.Context) {
+		AddReportEntry(constants.TestReportEntry, test.reportEntry)
+	})
+
 	return test, nil
 }
 
@@ -175,6 +194,7 @@ func (t *PeeredVPCTest) NewPeeredNode() *peered.Node {
 			SkipDelete:          t.SkipCleanup,
 			ClusterName:         t.Cluster.Name,
 			LogsBucket:          t.logsBucket,
+			TestName:            t.Name,
 		},
 	}
 }
@@ -227,24 +247,26 @@ func (t *PeeredVPCTest) NewVerifyPodIdentityAddon(nodeName string) *addon.Verify
 
 func (t *PeeredVPCTest) NewTestNode(ctx context.Context, instanceName, nodeName, k8sVersion string, os e2e.NodeadmOS, provider e2e.NodeadmCredentialsProvider, instanceSize e2e.InstanceSize) *testNode {
 	return &testNode{
-		ArtifactsPath:   t.ArtifactsPath,
-		ClusterName:     t.Cluster.Name,
-		EC2Client:       t.ec2Client,
-		EKSEndpoint:     t.eksEndpoint,
-		FailHandler:     t.handleFailure,
-		InstanceName:    instanceName,
-		InstanceSize:    instanceSize,
-		Logger:          t.Logger,
-		LoggerControl:   t.loggerControl,
-		LogsBucket:      t.logsBucket,
-		PeeredNode:      t.NewPeeredNode(),
-		NodeName:        nodeName,
-		K8sClient:       t.k8sClient,
-		K8sClientConfig: t.K8sClientConfig,
-		K8sVersion:      k8sVersion,
-		OS:              os,
-		Provider:        provider,
-		Region:          t.Cluster.Region,
+		ArtifactsPath:          t.ArtifactsPath,
+		ClusterName:            t.Cluster.Name,
+		EC2Client:              t.ec2Client,
+		EKSEndpoint:            t.eksEndpoint,
+		FailHandler:            t.handleFailure,
+		InstanceName:           instanceName,
+		InstanceSize:           instanceSize,
+		Logger:                 t.Logger,
+		LoggerControl:          t.loggerControl,
+		LogsBucket:             t.logsBucket,
+		PeeredNode:             t.NewPeeredNode(),
+		NodeName:               nodeName,
+		K8sClient:              t.k8sClient,
+		K8sClientConfig:        t.K8sClientConfig,
+		K8sVersion:             k8sVersion,
+		OS:                     os,
+		Provider:               provider,
+		Region:                 t.Cluster.Region,
+		TestName:               t.Name,
+		AddInstanceReportEntry: t.AddInstanceReportEntry,
 	}
 }
 
@@ -267,6 +289,10 @@ func (t *PeeredVPCTest) handleFailure(message string, callerSkip ...int) {
 		t.failureMessageLogged = true
 	}
 	Fail(message, skip+1)
+}
+
+func (t *PeeredVPCTest) AddInstanceReportEntry(entry run.InstanceReportEntry) {
+	t.reportEntry.Instances = append(t.reportEntry.Instances, entry)
 }
 
 func NewLoggerForTests() e2e.PausableLogger {

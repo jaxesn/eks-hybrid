@@ -15,6 +15,18 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/constants"
 )
 
+type TestReportEntry struct {
+	ArtifactsPath string
+	TestName      string
+	Instances     []InstanceReportEntry
+}
+
+type InstanceReportEntry struct {
+	InstanceName        string
+	LogBundleFile       string
+	SerialOutputLogFile string
+}
+
 type E2EReport struct {
 	ArtifactsFolder string
 }
@@ -69,7 +81,12 @@ func (e *E2EReport) parseJSONReport(reportPath string) (E2EResult, error) {
 
 		// s3 artifacts path is set on the spec, try to find it to set at
 		// the root e2eresult level
-		artifactsPath := getReportEntry(spec, constants.TestArtifactsPath)
+		testReportEntry, err := getTestReportEntry(spec)
+		if err != nil {
+			reportErrors = append(reportErrors, fmt.Errorf("getting test report entry: %w", err))
+		}
+
+		artifactsPath := testReportEntry.ArtifactsPath
 		if artifactsPath != "" && e2eResult.ArtifactsBucketPath == "" {
 			// strip test name from path, which is the last part of the path
 			// ex: ?prefix=logs/<cluster-name>/<instance-name>/
@@ -86,14 +103,8 @@ func (e *E2EReport) parseJSONReport(reportPath string) (E2EResult, error) {
 		// only Its will have log files created since ginkgo only captures stdout/stderr for It
 		leafType := spec.LeafNodeType
 		name := leafType.String()
-		if leafType == ginkgoTypes.NodeTypeIt {
-			name = strings.Join(spec.LeafNodeLabels, ", ")
-		}
 
-		// Get instance name from report entries
-		instanceName := getReportEntry(spec, constants.TestInstanceName)
 		failedTest := FailedTest{
-			InstanceName:   instanceName,
 			Name:           name,
 			State:          spec.State.String(),
 			FailureMessage: specFailureMessage(spec),
@@ -101,11 +112,14 @@ func (e *E2EReport) parseJSONReport(reportPath string) (E2EResult, error) {
 
 		if artifactsPath != "" {
 			failedTest.GinkgoLog = artifactsPath + testGinkgoOutputLog
-			failedTest.SerialLog = artifactsPath + constants.SerialOutputLogFile
 		}
-		collectorLogsURL := getReportEntry(spec, constants.TestLogBundleFile)
-		if collectorLogsURL != "" {
-			failedTest.CollectorLogsBundle = collectorLogsURL
+
+		// TODO: current test only add one instance
+		// conformance will add multiple instances
+		if len(testReportEntry.Instances) > 0 {
+			failedTest.CollectorLogsBundle = testReportEntry.Instances[0].LogBundleFile
+			failedTest.SerialLog = testReportEntry.Instances[0].SerialOutputLogFile
+			failedTest.Name = testReportEntry.Instances[0].InstanceName
 		}
 
 		e2eResult.FailedTests = append(e2eResult.FailedTests, failedTest)
@@ -116,12 +130,8 @@ func (e *E2EReport) parseJSONReport(reportPath string) (E2EResult, error) {
 		}
 
 		e2eResult.TestFailed = e2eResult.TestFailed + 1
-		if failedTest.InstanceName == "" {
-			reportErrors = append(reportErrors, fmt.Errorf("no instance name found for test"))
-			continue
-		}
 
-		if saveErr := e.saveTestLogFiles(spec, failedTest.InstanceName, failedTest.Name); saveErr != nil {
+		if saveErr := e.saveTestLogFiles(spec, failedTest.Name); saveErr != nil {
 			reportErrors = append(reportErrors, fmt.Errorf("saving log file: %w", saveErr))
 		}
 	}
@@ -137,8 +147,8 @@ func (e *E2EReport) parseJSONReport(reportPath string) (E2EResult, error) {
 
 // saveTestLogFile creates a detailed log file for a test and uploads it to S3 if configured
 // Returns the S3 path where the log was uploaded or an error
-func (e *E2EReport) saveTestLogFiles(spec ginkgoTypes.SpecReport, instanceName, specName string) error {
-	logsDir := filepath.Join(e.ArtifactsFolder, instanceName)
+func (e *E2EReport) saveTestLogFiles(spec ginkgoTypes.SpecReport, specName string) error {
+	logsDir := filepath.Join(e.ArtifactsFolder, specName)
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return fmt.Errorf("creating test logs directory: %w", err)
 	}
@@ -164,18 +174,6 @@ func (e *E2EReport) saveTestLogFiles(spec ginkgoTypes.SpecReport, instanceName, 
 		return fmt.Errorf("writing test log file: %w", err)
 	}
 
-	// check if test created the serial-output.log file and copy it to the logs directory
-	serialOutputLogFilePath := getReportEntry(spec, constants.TestSerialOutputLogFile)
-	if _, err := os.Stat(serialOutputLogFilePath); err != nil {
-		// sometimes the test will not produce the serial-output.log file
-		// ok to ignore
-		return nil
-	}
-
-	if err := os.Rename(serialOutputLogFilePath, filepath.Join(logsDir, constants.SerialOutputLogFile)); err != nil {
-		return fmt.Errorf("moving serial output log file: %w", err)
-	}
-
 	return nil
 }
 
@@ -199,11 +197,22 @@ func specFailureMessage(spec ginkgoTypes.SpecReport) string {
 	return sb.String()
 }
 
-func getReportEntry(spec ginkgoTypes.SpecReport, name string) string {
+func getTestReportEntry(spec ginkgoTypes.SpecReport) (TestReportEntry, error) {
+	var testReportEntryEntry ginkgoTypes.ReportEntry
 	for _, entry := range spec.ReportEntries {
-		if entry.Name == name {
-			return entry.Value.String()
+		if entry.Name == constants.TestReportEntry {
+			testReportEntryEntry = entry
 		}
 	}
-	return ""
+	if testReportEntryEntry.Name == "" {
+		return TestReportEntry{}, nil
+	}
+
+	var testReportEntry TestReportEntry
+	err := json.Unmarshal([]byte(testReportEntryEntry.Value.AsJSON), &testReportEntry)
+	if err != nil {
+		return TestReportEntry{}, fmt.Errorf("unmarshalling test report entry: %w", err)
+	}
+
+	return testReportEntry, nil
 }
