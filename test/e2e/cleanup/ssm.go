@@ -131,6 +131,9 @@ func (s *SSMCleaner) listManagedInstances(ctx context.Context, input *ssm.Descri
 			if instance.ResourceType != managedInstanceResourceType {
 				continue
 			}
+			if !resourceOldEnough(aws.ToTime(instance.RegistrationDate), filterInput) {
+				continue
+			}
 			output, err := s.ssm.ListTagsForResource(ctx, &ssm.ListTagsForResourceInput{
 				ResourceId:   aws.String(*instance.InstanceId),
 				ResourceType: types.ResourceTypeForTaggingManagedInstance,

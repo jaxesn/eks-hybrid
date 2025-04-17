@@ -61,6 +61,9 @@ func (c *RolesAnywhereCleaner) ListProfiles(ctx context.Context, filterInput Fil
 			if !strings.HasPrefix(*profile.Name, constants.TestCredentialsStackNamePrefix) {
 				continue
 			}
+			if !resourceOldEnough(aws.ToTime(profile.CreatedAt), filterInput) {
+				continue
+			}
 
 			output, err := c.rolesAnywhere.ListTagsForResource(ctx, &rolesanywhere.ListTagsForResourceInput{
 				ResourceArn: profile.ProfileArn,
@@ -133,6 +136,9 @@ func (c *RolesAnywhereCleaner) ListTrustAnchors(ctx context.Context, filterInput
 
 		for _, anchor := range page.TrustAnchors {
 			if !strings.HasPrefix(*anchor.Name, constants.TestCredentialsStackNamePrefix) {
+				continue
+			}
+			if !resourceOldEnough(aws.ToTime(anchor.CreatedAt), filterInput) {
 				continue
 			}
 

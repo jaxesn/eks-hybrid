@@ -40,6 +40,9 @@ func (s *S3Cleaner) ListBuckets(ctx context.Context, filterInput FilterInput) ([
 			tags, err := s.s3Client.GetBucketTagging(ctx, &s3.GetBucketTaggingInput{
 				Bucket: bucket.Name,
 			})
+			if !resourceOldEnough(aws.ToTime(bucket.CreationDate), filterInput) {
+				continue
+			}
 			if err != nil && (errors.IsS3BucketNotFound(err) || errors.IsAwsError(err, "NoSuchTagSet")) {
 				// skipping log since we are possiblying checking buckets we do not
 				// intend to delete
