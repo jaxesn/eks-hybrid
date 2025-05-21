@@ -2,40 +2,41 @@ package kubernetes
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/util/retry"
+
+	ik8s "github.com/aws/eks-hybrid/internal/kubernetes"
 )
 
+// NewServiceAccount creates a new service account in the given namespace, if it does not already exist.
 func NewServiceAccount(ctx context.Context, logger logr.Logger, k8s kubernetes.Interface, namespace, name string) error {
-	err := retry.OnError(retry.DefaultRetry, func(err error) bool {
-		// Retry any error type
-		return true
-	}, func() error {
-		if _, err := k8s.CoreV1().ServiceAccounts(namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
-			logger.Info("Service account already exists", "namespace", namespace, "name", name)
-			return nil
-		}
-
-		serviceAccount := &corev1.ServiceAccount{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: "v1",
-				Kind:       "ServiceAccount",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: namespace,
-				Name:      name,
-			},
-		}
-
-		if _, err := k8s.CoreV1().ServiceAccounts(namespace).Create(ctx, serviceAccount, metav1.CreateOptions{}); err != nil {
-			return err
-		}
-
+	// Check if service account already exists
+	_, err := ik8s.GetRetry(ctx, k8s.CoreV1().ServiceAccounts(namespace), name)
+	if err == nil {
+		logger.Info("Service account already exists", "namespace", namespace, "name", name)
 		return nil
-	})
-	return err
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("checking if service account exists: %w", err)
+	}
+
+	// Create new service account
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+	}
+
+	_, err = ik8s.CreateRetry(ctx, k8s.CoreV1().ServiceAccounts(namespace), sa)
+	if err != nil {
+		return fmt.Errorf("creating service account %s in namespace %s: %w", name, namespace, err)
+	}
+
+	return nil
 }

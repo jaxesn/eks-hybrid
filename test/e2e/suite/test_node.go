@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	ec2v2 "github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/go-logr/logr"
@@ -111,7 +112,9 @@ func (n *testNode) Start(ctx context.Context) error {
 }
 
 func (n *testNode) checkExistingNode(ctx context.Context) {
+	now := time.Now()
 	existingNode, err := kubernetes.CheckForNodeWithE2ELabel(ctx, n.K8sClient, n.NodeName)
+	n.Logger.Info("Check for existing node with e2e label took", "duration", time.Since(now))
 	Expect(err).NotTo(HaveOccurred(), "check for existing node with e2e label")
 	Expect(existingNode).To(BeNil(), "existing node with e2e label should not have been found")
 }
