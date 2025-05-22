@@ -29,6 +29,9 @@ var logCollectorScript []byte
 //go:embed testdata/nodeadm-wrapper.sh
 var nodeadmWrapperScript []byte
 
+//go:embed testdata/install-containerd.sh
+var installContainerdScript []byte
+
 type ubuntuCloudInitData struct {
 	e2e.UserDataInput
 	NodeadmUrl            string

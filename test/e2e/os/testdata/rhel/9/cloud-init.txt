@@ -17,8 +17,6 @@ yum_repos:
     baseurl: https://download.docker.com/linux/rhel/$releasever/$basearch/stable
     gpgcheck: true
     gpgkey: https://download.docker.com/linux/rhel/gpg
-packages:
-  - containerd.io
 {{- end }}
 package_update: true
 write_files:
@@ -35,6 +33,9 @@ write_files:
 {{- end }}
 
 runcmd:
+{{- if eq .ContainerdSource "none" }}
+  - /tmp/install-containerd.sh
+{{- end }}
   - /tmp/nodeadm-init.sh "{{ .NodeadmUrl }}" "{{ .KubernetesVersion }}" "{{ .Provider }}" "{{ .Region }}" "--containerd-source {{ .ContainerdSource }}"
 
 final_message: "The system is prepped, after $UPTIME seconds"
