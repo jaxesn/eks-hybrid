@@ -13,7 +13,14 @@ import (
 	"github.com/aws/eks-hybrid/test/e2e/errors"
 )
 
-func GetStackFailureReason(ctx context.Context, client *cloudformation.Client, stackName string) (string, error) {
+type CFNClient interface {
+	DescribeStacks(ctx context.Context, params *cloudformation.DescribeStacksInput, optFns ...func(*cloudformation.Options)) (*cloudformation.DescribeStacksOutput, error)
+	DescribeStackEvents(ctx context.Context, params *cloudformation.DescribeStackEventsInput, optFns ...func(*cloudformation.Options)) (*cloudformation.DescribeStackEventsOutput, error)
+	DeleteStack(ctx context.Context, params *cloudformation.DeleteStackInput, optFns ...func(*cloudformation.Options)) (*cloudformation.DeleteStackOutput, error)
+	ListStacks(ctx context.Context, params *cloudformation.ListStacksInput, optFns ...func(*cloudformation.Options)) (*cloudformation.ListStacksOutput, error)
+}
+
+func GetStackFailureReason(ctx context.Context, client CFNClient, stackName string) (string, error) {
 	resp, err := client.DescribeStackEvents(ctx, &cloudformation.DescribeStackEventsInput{
 		StackName: &stackName,
 	})
@@ -50,7 +57,7 @@ func GetStackFailureReason(ctx context.Context, client *cloudformation.Client, s
 
 // WaitForStackOperation waits for a stack to reach Create/Update/Delete Complete
 // when the operation fails, it will attempt to gather the failure reason and include it in the error
-func WaitForStackOperation(ctx context.Context, client *cloudformation.Client, stackName string, stackWaitInterval, stackWaitTimeout time.Duration) error {
+func WaitForStackOperation(ctx context.Context, client CFNClient, stackName string, stackWaitInterval, stackWaitTimeout time.Duration) error {
 	err := wait.PollUntilContextTimeout(ctx, stackWaitInterval, stackWaitTimeout, true, func(ctx context.Context) (bool, error) {
 		stackOutput, err := client.DescribeStacks(ctx, &cloudformation.DescribeStacksInput{
 			StackName: aws.String(stackName),

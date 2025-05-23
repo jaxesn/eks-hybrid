@@ -22,11 +22,11 @@ const (
 )
 
 type CFNStackCleanup struct {
-	cfnClient *cloudformation.Client
+	cfnClient cfn.CFNClient
 	logger    logr.Logger
 }
 
-func NewCFNStackCleanup(cfnClient *cloudformation.Client, logger logr.Logger) *CFNStackCleanup {
+func NewCFNStackCleanup(cfnClient cfn.CFNClient, logger logr.Logger) *CFNStackCleanup {
 	return &CFNStackCleanup{
 		cfnClient: cfnClient,
 		logger:    logger,
